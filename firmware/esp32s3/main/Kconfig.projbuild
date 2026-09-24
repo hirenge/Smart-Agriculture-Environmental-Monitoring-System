@@ -1,0 +1,32 @@
+menu "Smart Farm firmware"
+
+config SMARTFARM_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+
+config SMARTFARM_WIFI_PASSWORD
+    string "Wi-Fi password"
+    default ""
+
+config SMARTFARM_MQTT_BROKER_URI
+    string "MQTT broker URI"
+    default "mqtt://192.168.1.4:1883"
+
+config SMARTFARM_MQTT_USERNAME
+    string "MQTT username"
+    default "smartfarm_esp32"
+
+config SMARTFARM_MQTT_PASSWORD
+    string "MQTT password"
+    default ""
+
+config SMARTFARM_DEVICE_ID
+    string "Device ID"
+    default "farm-01"
+
+config SMARTFARM_TELEMETRY_INTERVAL_SECONDS
+    int "Telemetry interval in seconds"
+    range 1 3600
+    default 10
+
+endmenu

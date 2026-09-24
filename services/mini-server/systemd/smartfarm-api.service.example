@@ -1,0 +1,15 @@
+[Unit]
+Description=Smart Farm FastAPI server
+After=network-online.target smartfarm-ingestor.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/Smart-Agriculture-Environmental-Monitoring-System/services/mini-server
+ExecStart=/home/admin/Smart-Agriculture-Environmental-Monitoring-System/services/mini-server/.venv/bin/uvicorn api:app --host 0.0.0.0 --port 3000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

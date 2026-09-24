@@ -1,0 +1,8 @@
+# Device account: publish only its telemetry and optionally receive commands.
+user smartfarm_esp32
+topic write smartfarm/farm-01/telemetry
+topic read smartfarm/farm-01/commands
+
+# Server account: ingest and monitor telemetry from all farm devices.
+user smartfarm_server
+topic read smartfarm/+/telemetry

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Smart Farm Dashboard</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; font-family: Arial, sans-serif; background: #f1f5f9; color: #1e293b; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px; margin: 24px 0; }
+    .card, .chart { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px #00000014; }
+    .label { color: #64748b; font-size: 14px; margin-bottom: 10px; }
+    .value { font-size: 28px; font-weight: 700; }
+    .unit { color: #64748b; font-size: 14px; }
+    .status { padding: 8px 14px; border-radius: 20px; font-weight: 700; background: #dcfce7; color: #166534; }
+    .status.offline { background: #fee2e2; color: #991b1b; }
+    canvas { width: 100%; height: 360px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 16px; color: #475569; font-size: 13px; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+    #error { color: #b91c1c; min-height: 20px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>Smart Farm Dashboard</h1><div>Thiết bị: <strong id="device">farm-01</strong></div></div>
+    <div id="status" class="status offline">ĐANG TẢI</div>
+  </header>
+
+  <main>
+    <section class="cards">
+      <div class="card"><div class="label">Nhiệt độ</div><div class="value"><span id="temperature">--</span> <span class="unit">°C</span></div></div>
+      <div class="card"><div class="label">Độ ẩm không khí</div><div class="value"><span id="humidity">--</span> <span class="unit">%</span></div></div>
+      <div class="card"><div class="label">Độ ẩm đất</div><div class="value"><span id="soil">--</span> <span class="unit">%</span></div></div>
+      <div class="card"><div class="label">Ánh sáng</div><div class="value"><span id="light">--</span> <span class="unit">lux</span></div></div>
+      <div class="card"><div class="label">Pin</div><div class="value"><span id="battery">--</span> <span class="unit">%</span></div></div>
+      <div class="card"><div class="label">Trạng thái bơm</div><div class="value" id="pump">--</div></div>
+    </section>
+
+    <section class="chart">
+      <h2>Lịch sử cảm biến</h2>
+      <div class="legend">
+        <span><i class="dot" style="background:#ef4444"></i>Nhiệt độ</span>
+        <span><i class="dot" style="background:#2563eb"></i>Độ ẩm không khí</span>
+        <span><i class="dot" style="background:#16a34a"></i>Độ ẩm đất</span>
+      </div>
+      <canvas id="history"></canvas>
+      <div id="error"></div>
+    </section>
+  </main>
+
+  <script>
+    const deviceId = "farm-01";
+    const colors = ["#ef4444", "#2563eb", "#16a34a"];
+
+    function setValue(id, value, digits = 1) {
+      document.getElementById(id).textContent = value == null ? "--" : Number(value).toFixed(digits);
+    }
+
+    function drawHistory(items) {
+      const canvas = document.getElementById("history");
+      const ratio = window.devicePixelRatio || 1;
+      const width = Math.max(canvas.clientWidth, 320);
+      const height = 360;
+      canvas.width = width * ratio;
+      canvas.height = height * ratio;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(ratio, ratio);
+      ctx.clearRect(0, 0, width, height);
+
+      const pad = 36;
+      ctx.strokeStyle = "#cbd5e1";
+      ctx.beginPath();
+      ctx.moveTo(pad, 10);
+      ctx.lineTo(pad, height - pad);
+      ctx.lineTo(width - 10, height - pad);
+      ctx.stroke();
+
+      if (items.length < 2) return;
+      const series = ["temperature_c", "humidity_pct", "soil_moisture_pct"];
+      const values = items.flatMap(item => series.map(key => Number(item[key])).filter(Number.isFinite));
+      if (!values.length) return;
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const span = Math.max(max - min, 1);
+
+      series.forEach((key, seriesIndex) => {
+        ctx.strokeStyle = colors[seriesIndex];
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        let started = false;
+        items.forEach((item, index) => {
+          const value = Number(item[key]);
+          if (!Number.isFinite(value)) return;
+          const x = pad + index * (width - pad - 10) / (items.length - 1);
+          const y = 10 + (max - value) * (height - pad - 20) / span;
+          if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
+        });
+        ctx.stroke();
+      });
+    }
+
+    async function requestJson(url) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      return response.json();
+    }
+
+    async function refresh() {
+      try {
+        const statusData = await requestJson(`/api/v1/devices/${deviceId}/status`);
+        const telemetry = statusData.telemetry;
+        const status = document.getElementById("status");
+        status.textContent = statusData.online ? "ONLINE" : "OFFLINE";
+        status.className = statusData.online ? "status" : "status offline";
+        setValue("temperature", telemetry.temperature_c);
+        setValue("humidity", telemetry.humidity_pct);
+        setValue("soil", telemetry.soil_moisture_pct);
+        setValue("light", telemetry.light_value, 0);
+        setValue("battery", telemetry.battery_pct, 0);
+        document.getElementById("pump").textContent = telemetry.pump_state || "--";
+
+        const history = await requestJson(`/api/v1/devices/${deviceId}/telemetry?limit=50`);
+        drawHistory(history.items || []);
+        document.getElementById("error").textContent = "";
+      } catch (error) {
+        document.getElementById("status").className = "status offline";
+        document.getElementById("status").textContent = "OFFLINE";
+        document.getElementById("error").textContent = `Không thể tải dữ liệu: ${error.message}`;
+      }
+    }
+
+    window.addEventListener("resize", refresh);
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

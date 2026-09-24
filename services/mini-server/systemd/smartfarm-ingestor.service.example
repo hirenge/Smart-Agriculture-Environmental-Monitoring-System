@@ -1,0 +1,16 @@
+[Unit]
+Description=Smart Farm MQTT ingestor
+After=network-online.target mosquitto.service
+Wants=network-online.target mosquitto.service
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/Smart-Agriculture-Environmental-Monitoring-System/services/mini-server
+EnvironmentFile=/home/admin/Smart-Agriculture-Environmental-Monitoring-System/services/mini-server/.env
+ExecStart=/home/admin/Smart-Agriculture-Environmental-Monitoring-System/services/mini-server/.venv/bin/python /home/admin/Smart-Agriculture-Environmental-Monitoring-System/services/mini-server/mqtt_ingestor.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
