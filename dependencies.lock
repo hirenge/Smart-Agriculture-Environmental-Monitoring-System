@@ -1,4 +1,23 @@
 dependencies:
+  achimpieters/esp32-bh1750:
+    component_hash: f57c256dd97e8222270e1f90cf204995f91a2a1d2e2a3684de4d45cd3ec19980
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32
+    - esp32c2
+    - esp32c3
+    - esp32c5
+    - esp32c6
+    - esp32c61
+    - esp32s2
+    - esp32s3
+    version: 1.0.1
   espp/adc:
     component_hash: dc3915df952e12d32c99c7034d8a53c2779da3a658fbe8587f70cb8c5dadad55
     dependencies:
@@ -116,10 +135,11 @@ dependencies:
       type: idf
     version: 6.0.2
 direct_dependencies:
+- achimpieters/esp32-bh1750
 - espp/adc
 - espressif/aht20
 - espressif/i2c_bus
 - idf
-manifest_hash: 5b0234af7e858b0ac981a74bb8fa0fc045f633810c3eef39e8fb1be1feb39bea
+manifest_hash: 2408618480b77fa02c5248a4d0d0dd4acec9a9374c227cec4da556cb25d71638
 target: esp32s3
 version: 3.0.0
