@@ -1,32 +1,108 @@
-menu "Smart Farm firmware"
+menu "SAEMS firmware"
 
-config SMARTFARM_WIFI_SSID
+config SAEMS_WIFI_SSID
     string "Wi-Fi SSID"
     default ""
 
-config SMARTFARM_WIFI_PASSWORD
+config SAEMS_WIFI_PASSWORD
     string "Wi-Fi password"
     default ""
 
-config SMARTFARM_MQTT_BROKER_URI
+config SAEMS_MQTT_BROKER_URI
     string "MQTT broker URI"
     default "mqtt://192.168.1.4:1883"
 
-config SMARTFARM_MQTT_USERNAME
+config SAEMS_MQTT_USERNAME
     string "MQTT username"
-    default "smartfarm_esp32"
+    default "saems_esp32"
 
-config SMARTFARM_MQTT_PASSWORD
+config SAEMS_MQTT_PASSWORD
     string "MQTT password"
     default ""
 
-config SMARTFARM_DEVICE_ID
+config SAEMS_DEVICE_ID
     string "Device ID"
     default "farm-01"
 
-config SMARTFARM_TELEMETRY_INTERVAL_SECONDS
+config SAEMS_TELEMETRY_INTERVAL_SECONDS
     int "Telemetry interval in seconds"
     range 1 3600
     default 10
+
+config SAEMS_BLE_ENABLED
+    bool "Enable BLE direct connection"
+    default y
+    help
+        Exposes the SAEMS GATT service used by the mobile application for
+        telemetry notifications, configuration and pump commands.
+
+config SAEMS_AP_ENABLED
+    bool "Enable Wi-Fi Access Point and local REST API"
+    default n
+    help
+        Enables AP+STA mode and the local API at http://192.168.4.1. Keep this
+        disabled until a unique WPA2 password has been configured.
+
+config SAEMS_AP_PASSWORD
+    string "Wi-Fi AP password"
+    default ""
+    help
+        WPA2 password for the direct connection AP. It must contain at least
+        eight characters and must not be committed in sdkconfig.
+
+config SAEMS_POWER_SAVE_ENABLED
+    bool "Enable Wi-Fi modem power saving"
+    default y
+    help
+        Enables modem power saving while preserving MQTT, BLE and AP sessions.
+        Light/deep sleep remain guarded by Power Manager and are not entered
+        while a direct connection or pending synchronization is active.
+
+choice SAEMS_BH1750_I2C_ADDRESS
+    prompt "BH1750 I2C address"
+    default SAEMS_BH1750_ADDRESS_LOW
+
+config SAEMS_BH1750_ADDRESS_LOW
+    bool "0x23 (ADDR low or floating)"
+
+config SAEMS_BH1750_ADDRESS_HIGH
+    bool "0x5C (ADDR high)"
+
+endchoice
+
+config SAEMS_RELAY_ACTIVE_LOW
+    bool "Relay inputs are active-low"
+    default y
+    help
+        Most two-channel SRD-05VDC-SL-C relay modules energize a channel
+        when IN is low. Disable this option only if the actual relay board
+        is confirmed to use active-high inputs.
+
+config SAEMS_RELAY_MAX_ON_SECONDS
+    int "Maximum pump ON duration in seconds"
+    range 1 86400
+    default 60
+    help
+        Safety limit for remote pump commands. The firmware turns channel 1
+        off automatically after this duration.
+
+config SAEMS_SOIL_SENSOR_ENABLED
+    bool "Enable LM393 soil moisture sensor"
+    default n
+    help
+        Leave disabled until the probe is attached and dry/wet ADC values
+        have been measured. While disabled, soil_moisture_pct is JSON null.
+
+config SAEMS_SOIL_DRY_RAW
+    int "LM393 dry ADC value"
+    range 0 4095
+    default 3000
+    depends on SAEMS_SOIL_SENSOR_ENABLED
+
+config SAEMS_SOIL_WET_RAW
+    int "LM393 wet ADC value"
+    range 0 4095
+    default 1200
+    depends on SAEMS_SOIL_SENSOR_ENABLED
 
 endmenu

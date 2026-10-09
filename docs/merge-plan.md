@@ -1,4 +1,4 @@
-# Smart Farm merge plan
+# SAEMS merge plan
 
 Thư mục này được chuẩn bị để chép vào repository chung mà không sửa các file
 firmware đang nằm ở root của repository.
@@ -6,6 +6,7 @@ firmware đang nằm ở root của repository.
 ```text
 firmware/esp32s3/       ESP-IDF firmware gửi telemetry
 services/mini-server/   MQTT ingestor, SQLite, API và dashboard
+mobile/saems_app/       Flutter Android client cho server, BLE và Wi-Fi AP
 ```
 
 Nên đưa hai module vào một feature branch riêng. Không di chuyển hoặc xóa project

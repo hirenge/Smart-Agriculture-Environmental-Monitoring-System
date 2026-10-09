@@ -13,6 +13,6 @@ exec mosquitto_sub \
   -p "$MQTT_PORT" \
   -u "$MQTT_USERNAME" \
   -P "$MQTT_PASSWORD" \
-  -t "smartfarm/+/telemetry" \
+  -t "saems/+/telemetry" \
   -q 1 \
   -v

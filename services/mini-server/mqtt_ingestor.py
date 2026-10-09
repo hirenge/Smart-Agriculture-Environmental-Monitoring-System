@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
+from mqtt_security import configure_mqtt_tls
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -16,10 +17,10 @@ DB_PATH = DATA_DIR / "telemetry.db"
 
 MQTT_HOST = os.getenv("MQTT_HOST", "192.168.1.4")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
-MQTT_USERNAME = os.getenv("MQTT_USERNAME", "smartfarm_server")
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "saems_server")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
-MQTT_TOPIC = "smartfarm/+/telemetry"
-MQTT_CLIENT_ID = "smartfarm-mini-server-ingestor"
+MQTT_TOPIC = "saems/+/telemetry"
+MQTT_CLIENT_ID = "saems-mini-server-ingestor"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,6 +35,31 @@ def utc_now() -> str:
 def optional_float(payload: dict, key: str):
     value = payload.get(key)
     return None if value is None else float(value)
+
+
+def drop_legacy_sequence_indexes(connection) -> None:
+    """Remove old unique indexes that ignored boot_id."""
+    indexes = connection.execute("PRAGMA index_list(telemetry)").fetchall()
+    for index in indexes:
+        index_name = index[1]
+        is_unique = bool(index[2])
+        if (
+            not is_unique
+            or index_name == "uq_telemetry_device_boot_seq"
+            or index_name.startswith("sqlite_autoindex_")
+        ):
+            continue
+
+        quoted_name = '"' + index_name.replace('"', '""') + '"'
+        columns = [
+            row[2]
+            for row in connection.execute(
+                f"PRAGMA index_info({quoted_name})"
+            )
+        ]
+        if columns == ["device_id", "seq"]:
+            logging.warning("Dropping legacy unique index: %s", index_name)
+            connection.execute(f"DROP INDEX {quoted_name}")
 
 
 def initialize_database() -> None:
@@ -74,6 +100,7 @@ def initialize_database() -> None:
         # The old index dropped valid data after a device rebooted and seq
         # restarted at 1. boot_id makes a sequence unique within one boot.
         connection.execute("DROP INDEX IF EXISTS uq_telemetry_device_seq")
+        drop_legacy_sequence_indexes(connection)
         connection.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS
@@ -98,12 +125,16 @@ def on_connect(client, userdata, flags, reason_code, properties) -> None:
         logging.info("Subscribed to %s", MQTT_TOPIC)
 
 
+def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
+    logging.warning("MQTT disconnected: %s; waiting for reconnect", reason_code)
+
+
 def on_message(client, userdata, message) -> None:
     try:
         topic_parts = message.topic.split("/")
         if (
             len(topic_parts) != 3
-            or topic_parts[0] != "smartfarm"
+            or topic_parts[0] != "saems"
             or topic_parts[2] != "telemetry"
         ):
             logging.warning("Ignoring unexpected topic: %s", message.topic)
@@ -190,8 +221,10 @@ def create_mqtt_client():
         clean_session=False,
     )
     client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+    configure_mqtt_tls(client)
     client.reconnect_delay_set(min_delay=1, max_delay=30)
     client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
     client.on_message = on_message
     return client
 
@@ -203,8 +236,10 @@ def main() -> None:
     initialize_database()
     logging.info("Database: %s", DB_PATH)
     client = create_mqtt_client()
-    client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
-    client.loop_forever()
+    client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)
+    # Retry the initial connection as well as later disconnects. This keeps
+    # the service alive during broker/network restarts.
+    client.loop_forever(retry_first_connection=True)
 
 
 if __name__ == "__main__":

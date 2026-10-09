@@ -1,0 +1,8 @@
+# Isolated broker for SAEMS Internet traffic. The existing LAN broker is kept.
+listener 1884 127.0.0.1
+allow_anonymous false
+password_file /home/admin/saems-mini-server/config/mqtt-passwd
+acl_file /home/admin/saems-mini-server/config/mqtt-acl
+persistence true
+persistence_location /home/admin/saems-mini-server/data/mqtt/
+log_dest stdout

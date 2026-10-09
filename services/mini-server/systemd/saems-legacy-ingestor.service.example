@@ -1,0 +1,19 @@
+[Unit]
+Description=SAEMS read-only legacy firmware telemetry receiver
+After=network-online.target mosquitto.service saems-ingestor.service
+Wants=network-online.target mosquitto.service
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/saems-mini-server
+Environment=LEGACY_ENV_FILE=/home/admin/saems-mini-server/.legacy.env
+ExecStart=/home/admin/saems-mini-server/.venv/bin/python /home/admin/saems-mini-server/legacy_mqtt_ingestor.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/admin/saems-mini-server/data
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=SAEMS FastAPI server
+After=network-online.target saems-ingestor.service saems-mqtt.service
+Wants=network-online.target saems-mqtt.service
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/saems-mini-server
+EnvironmentFile=/home/admin/saems-mini-server/.env
+ExecStart=/home/admin/saems-mini-server/.venv/bin/uvicorn api:app --host 127.0.0.1 --port 3000
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/admin/saems-mini-server/data
+
+[Install]
+WantedBy=multi-user.target

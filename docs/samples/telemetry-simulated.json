@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "device_id": "farm-01",
+  "boot_id": "simulator-01",
+  "seq": 42,
+  "timestamp": "2026-10-02T08:00:00Z",
+  "received_at": "2026-10-02T08:00:01Z",
+  "data_mode": "simulated",
+  "sensor_health": "ok",
+  "temperature_c": 27.4,
+  "humidity_pct": 68.2,
+  "soil_moisture_pct": 52.0,
+  "light_lux": 812.0,
+  "battery_pct": 90.0,
+  "pump_state": "off"
+}
