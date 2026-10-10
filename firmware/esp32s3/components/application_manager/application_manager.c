@@ -13,9 +13,12 @@
 #include "data_manager.h"
 #include "direct_connection.h"
 #include "esp_app_desc.h"
+#include "esp_attr.h"
+#include "esp_bit_defs.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_sleep.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -35,6 +38,15 @@
 #define SAEMS_SEQUENCE_BLOCK_SIZE 1000000U
 #define SAEMS_NVS_NAMESPACE "saems"
 #define SAEMS_NVS_SEQUENCE_KEY "seq_next"
+#define SAEMS_RTC_SEQUENCE_MAGIC 0x5341454dU
+
+#ifndef CONFIG_SAEMS_DEEP_SLEEP_SYNC_WINDOW_SECONDS
+#define CONFIG_SAEMS_DEEP_SLEEP_SYNC_WINDOW_SECONDS 15
+#endif
+
+#ifndef CONFIG_SAEMS_BATTERY_MAINTENANCE_WINDOW_SECONDS
+#define CONFIG_SAEMS_BATTERY_MAINTENANCE_WINDOW_SECONDS 10
+#endif
 
 #ifdef CONFIG_SAEMS_BH1750_ADDRESS_HIGH
 #define SAEMS_BH1750_ADDRESS 0x5C
@@ -82,8 +94,72 @@ typedef struct {
     bool relay_ready;
 } application_context_t;
 
+typedef struct {
+    uint32_t magic;
+    uint32_t boot_id;
+    uint32_t next_sequence;
+    uint32_t sequence_limit;
+} application_rtc_state_t;
+
 static const char *TAG = "APPLICATION_MANAGER";
 static application_context_t application;
+RTC_DATA_ATTR static application_rtc_state_t rtc_state;
+
+static power_manager_mode_t configured_power_mode(
+    const saems_config_t *config)
+{
+    if (config->power_mode == SAEMS_POWER_MODE_BATTERY) {
+        return POWER_MANAGER_DEEP_SLEEP;
+    }
+    if (config->power_mode == SAEMS_POWER_MODE_LIGHT) {
+        return POWER_MANAGER_LIGHT_SLEEP;
+    }
+    if (!config->power_save_enabled) {
+        return POWER_MANAGER_ACTIVE;
+    }
+    return config->wifi_ssid[0] != '\0'
+               ? POWER_MANAGER_MODEM_SAVE
+               : POWER_MANAGER_ACTIVE;
+}
+
+static esp_err_t refresh_runtime_configuration(void)
+{
+    saems_config_t latest;
+    ESP_RETURN_ON_ERROR(
+        config_manager_get(&application.config_manager, &latest),
+        TAG,
+        "refresh runtime config");
+    const saems_power_mode_t previous = application.config.power_mode;
+    ESP_RETURN_ON_ERROR(
+        power_manager_set_mode(
+            &application.power_manager, configured_power_mode(&latest)),
+        TAG,
+        "apply runtime power mode");
+    application.config = latest;
+    if (previous != latest.power_mode) {
+        ESP_LOGI(TAG,
+                 "Power mode applied at sample boundary: %s -> %s",
+                 saems_power_mode_name(previous),
+                 saems_power_mode_name(latest.power_mode));
+    }
+    return ESP_OK;
+}
+
+static bool timer_wakeup(uint32_t causes)
+{
+    return (causes & BIT(ESP_SLEEP_WAKEUP_TIMER)) != 0;
+}
+
+static const char *wakeup_reason_name(uint32_t causes)
+{
+    if (timer_wakeup(causes)) {
+        return "timer";
+    }
+    if (causes == 0) {
+        return "cold-boot-or-reset";
+    }
+    return "other";
+}
 
 static const char *state_name(application_state_t state)
 {
@@ -145,6 +221,42 @@ static esp_err_t reserve_sequence_block(uint32_t *first_sequence)
     }
     nvs_close(handle);
     return result;
+}
+
+static void save_rtc_sequence_state(void)
+{
+    rtc_state.magic = SAEMS_RTC_SEQUENCE_MAGIC;
+    rtc_state.boot_id = application.boot_id;
+    rtc_state.next_sequence = application.sequence;
+    rtc_state.sequence_limit = application.sequence_limit;
+}
+
+static esp_err_t initialize_sequence_state(uint32_t wakeup_causes)
+{
+    if (timer_wakeup(wakeup_causes) &&
+        rtc_state.magic == SAEMS_RTC_SEQUENCE_MAGIC &&
+        rtc_state.next_sequence < rtc_state.sequence_limit) {
+        application.boot_id = rtc_state.boot_id;
+        application.sequence = rtc_state.next_sequence;
+        application.sequence_limit = rtc_state.sequence_limit;
+        ESP_LOGI(TAG,
+                 "Resumed RTC sequence: boot=%08" PRIx32
+                 " next=%" PRIu32 " limit=%" PRIu32,
+                 application.boot_id,
+                 application.sequence,
+                 application.sequence_limit);
+        return ESP_OK;
+    }
+
+    application.boot_id = esp_random();
+    ESP_RETURN_ON_ERROR(
+        reserve_sequence_block(&application.sequence),
+        TAG,
+        "reserve sequence");
+    application.sequence_limit =
+        application.sequence + SAEMS_SEQUENCE_BLOCK_SIZE;
+    save_rtc_sequence_state();
+    return ESP_OK;
 }
 
 static void pump_timeout(void *arg)
@@ -308,9 +420,8 @@ static esp_err_t update_config(
     esp_err_t result = config_manager_update_json(
         &application.config_manager, json, json_length);
     if (result == ESP_OK) {
-        (void)config_manager_get(
-            &application.config_manager, &application.config);
-        ESP_LOGI(TAG, "Runtime configuration updated and persisted");
+        ESP_LOGI(TAG,
+                 "Configuration persisted; power mode applies at next sample boundary");
     }
     return result;
 }
@@ -374,10 +485,46 @@ static void start_mqtt_when_ready(void)
     }
 }
 
+static void wait_for_deep_sleep_sync_window(void)
+{
+    if (!power_manager_is_deep_sleep(&application.power_manager)) {
+        return;
+    }
+    const TickType_t started = xTaskGetTickCount();
+    const TickType_t timeout = pdMS_TO_TICKS(
+        CONFIG_SAEMS_DEEP_SLEEP_SYNC_WINDOW_SECONDS * 1000U);
+    const TickType_t maintenance = pdMS_TO_TICKS(
+        CONFIG_SAEMS_BATTERY_MAINTENANCE_WINDOW_SECONDS * 1000U);
+    while ((xTaskGetTickCount() - started) < timeout) {
+        if (refresh_runtime_configuration() != ESP_OK ||
+            !power_manager_is_deep_sleep(&application.power_manager)) {
+            ESP_LOGI(TAG, "Deep sleep sync window cancelled by runtime mode change");
+            return;
+        }
+        start_mqtt_when_ready();
+        sync_manager_kick(&application.sync_manager);
+        if ((xTaskGetTickCount() - started) >= maintenance &&
+            storage_manager_pending_count(&application.storage_manager) == 0) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    ESP_LOGI(TAG,
+             "Battery window ended: pending=%u maintenance=%us deadline=%us",
+             (unsigned)storage_manager_pending_count(
+                 &application.storage_manager),
+             (unsigned)CONFIG_SAEMS_BATTERY_MAINTENANCE_WINDOW_SECONDS,
+             (unsigned)CONFIG_SAEMS_DEEP_SLEEP_SYNC_WINDOW_SECONDS);
+}
+
 static void sampling_task(void *arg)
 {
     (void)arg;
     while (true) {
+        const TickType_t cycle_started = xTaskGetTickCount();
+        if (refresh_runtime_configuration() != ESP_OK) {
+            ESP_LOGW(TAG, "Using previous runtime configuration for this cycle");
+        }
         if (application.sequence >= application.sequence_limit) {
             esp_err_t result = reserve_sequence_block(&application.sequence);
             if (result != ESP_OK) {
@@ -444,10 +591,15 @@ static void sampling_task(void *arg)
         /* A live BLE reading must not reuse a sequence if the offline queue
          * is full and that sample cannot be persisted. */
         application.sequence++;
+        save_rtc_sequence_state();
 
         transition(APP_STATE_SYNC_DATA);
+        if (refresh_runtime_configuration() != ESP_OK) {
+            ESP_LOGW(TAG, "Power mode update deferred to the next cycle");
+        }
         start_mqtt_when_ready();
         sync_manager_kick(&application.sync_manager);
+        wait_for_deep_sleep_sync_window();
         ESP_LOGI(TAG,
                  "Sample captured: boot=%08" PRIx32 " seq=%" PRIu32
                  " pending=%u payload=%s",
@@ -459,12 +611,25 @@ static void sampling_task(void *arg)
 
         transition(APP_STATE_IDLE);
         bool direct_active =
-            ap_server_is_running(&application.ap_server) ||
             ble_manager_is_connected(&application.ble_manager);
         bool sync_pending = storage_manager_pending_count(
                                 &application.storage_manager) > 0;
+        uint32_t idle_seconds = application.config.telemetry_interval_s;
+        if (power_manager_is_deep_sleep(&application.power_manager)) {
+            if (application.relay_ready) {
+                (void)relay_set(
+                    &application.relay, RELAY_CHANNEL_1, false);
+                (void)relay_set(
+                    &application.relay, RELAY_CHANNEL_2, false);
+            }
+            uint32_t elapsed_seconds = (uint32_t)(
+                (xTaskGetTickCount() - cycle_started) / configTICK_RATE_HZ);
+            idle_seconds = elapsed_seconds < application.config.telemetry_interval_s
+                               ? application.config.telemetry_interval_s - elapsed_seconds
+                               : 1U;
+        }
         (void)power_manager_idle(&application.power_manager,
-                                 application.config.telemetry_interval_s,
+                                 idle_seconds,
                                  direct_active,
                                  sync_pending);
     }
@@ -474,6 +639,9 @@ esp_err_t application_manager_start(void)
 {
     memset(&application, 0, sizeof(application));
     transition(APP_STATE_BOOT);
+    uint32_t wakeup_causes = esp_sleep_get_wakeup_causes();
+    ESP_LOGI(TAG, "Wake reason: %s (mask=0x%08" PRIx32 ")",
+             wakeup_reason_name(wakeup_causes), wakeup_causes);
     application.latest_mutex = xSemaphoreCreateMutex();
     if (application.latest_mutex == NULL) {
         return ESP_ERR_NO_MEM;
@@ -530,6 +698,13 @@ esp_err_t application_manager_start(void)
 #ifdef CONFIG_SAEMS_POWER_SAVE_ENABLED
     defaults.power_save_enabled = true;
 #endif
+#ifdef CONFIG_SAEMS_POWER_MODE_LIGHT_SLEEP
+    defaults.power_mode = SAEMS_POWER_MODE_LIGHT;
+#elif defined(CONFIG_SAEMS_POWER_MODE_DEEP_SLEEP)
+    defaults.power_mode = SAEMS_POWER_MODE_BATTERY;
+#else
+    defaults.power_mode = SAEMS_POWER_MODE_DIRECT;
+#endif
 
     transition(APP_STATE_INIT);
     ESP_RETURN_ON_ERROR(
@@ -544,13 +719,18 @@ esp_err_t application_manager_start(void)
         ESP_LOGE(TAG, "Missing device configuration");
         return ESP_ERR_INVALID_STATE;
     }
-
     const sensor_manager_config_t sensor_config = {
         .i2c_port = I2C_NUM_0,
         .i2c_sda = SAEMS_I2C_SDA,
         .i2c_scl = SAEMS_I2C_SCL,
         .bh1750_address = SAEMS_BH1750_ADDRESS,
-        .soil_enabled = application.config.soil_enabled,
+        .soil_enabled = application.config.soil_enabled
+#ifdef CONFIG_SAEMS_SOIL_RAW_READOUT_ENABLED
+                        || true
+#endif
+                        ,
+        .soil_calibrated = application.config.soil_enabled &&
+                           application.config.soil_calibrated,
         .soil_dry_raw = application.config.soil_dry_raw,
         .soil_wet_raw = application.config.soil_wet_raw,
     };
@@ -591,9 +771,7 @@ esp_err_t application_manager_start(void)
     ESP_RETURN_ON_ERROR(
         power_manager_init(
             &application.power_manager,
-            station_configured && application.config.power_save_enabled
-                ? POWER_MANAGER_MODEM_SAVE
-                : POWER_MANAGER_ACTIVE),
+            configured_power_mode(&application.config)),
         TAG,
         "power manager");
 
@@ -629,13 +807,10 @@ esp_err_t application_manager_start(void)
             "BLE manager");
     }
 
-    application.boot_id = esp_random();
     ESP_RETURN_ON_ERROR(
-        reserve_sequence_block(&application.sequence),
+        initialize_sequence_state(wakeup_causes),
         TAG,
-        "reserve sequence");
-    application.sequence_limit =
-        application.sequence + SAEMS_SEQUENCE_BLOCK_SIZE;
+        "initialize sequence");
 
     BaseType_t task_result = xTaskCreate(
         sampling_task, "saems_state_machine", 8192, NULL, 5, NULL);
@@ -643,7 +818,8 @@ esp_err_t application_manager_start(void)
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG,
-             "SAEMS application started: AP=%d BLE=%d pending=%u",
+             "SAEMS application started: power=%s AP=%d BLE=%d pending=%u",
+             power_manager_mode_name(application.power_manager.mode),
              application.config.ap_enabled,
              application.config.ble_enabled,
              (unsigned)storage_manager_pending_count(

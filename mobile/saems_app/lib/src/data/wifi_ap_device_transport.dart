@@ -104,6 +104,7 @@ class WifiApDeviceTransport implements DeviceTransport, DirectConfigTransport {
             int.tryParse(body['telemetry_interval_s']?.toString() ?? '') ?? 10,
         soilDryRaw: int.tryParse(body['soil_dry_raw']?.toString() ?? ''),
         soilWetRaw: int.tryParse(body['soil_wet_raw']?.toString() ?? ''),
+        powerMode: body['power_mode']?.toString() ?? 'direct',
       );
     } on DioException catch (error) {
       mapDioError(error);

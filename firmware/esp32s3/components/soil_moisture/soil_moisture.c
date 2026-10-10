@@ -1,4 +1,5 @@
 #include "soil_moisture.h"
+#include "soil_calibration.h"
 
 #include "driver/gpio.h"
 
@@ -71,14 +72,7 @@ esp_err_t soil_moisture_read(
     *raw_value = sum / SOIL_ADC_SAMPLES;
     *digital_level = gpio_get_level(SOIL_DIGITAL_GPIO) != 0;
 
-    float percent =
-        ((float)sensor->dry_raw - (float)*raw_value) * 100.0f /
-        ((float)sensor->dry_raw - (float)sensor->wet_raw);
-    if (percent < 0.0f) {
-        percent = 0.0f;
-    } else if (percent > 100.0f) {
-        percent = 100.0f;
-    }
-    *moisture_pct = percent;
+    *moisture_pct = soil_calibration_percent(
+        *raw_value, sensor->dry_raw, sensor->wet_raw);
     return ESP_OK;
 }

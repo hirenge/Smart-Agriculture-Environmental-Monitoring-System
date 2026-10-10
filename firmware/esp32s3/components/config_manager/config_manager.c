@@ -9,8 +9,41 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "nvs.h"
+#include "sdkconfig.h"
 
 #define CONFIG_NAMESPACE "saems_cfg"
+
+const char *saems_power_mode_name(saems_power_mode_t mode)
+{
+    switch (mode) {
+    case SAEMS_POWER_MODE_DIRECT:
+        return "direct";
+    case SAEMS_POWER_MODE_LIGHT:
+        return "light";
+    case SAEMS_POWER_MODE_BATTERY:
+        return "battery";
+    default:
+        return "direct";
+    }
+}
+
+esp_err_t saems_power_mode_from_string(
+    const char *value, saems_power_mode_t *mode)
+{
+    if (value == NULL || mode == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (strcmp(value, "direct") == 0) {
+        *mode = SAEMS_POWER_MODE_DIRECT;
+    } else if (strcmp(value, "light") == 0) {
+        *mode = SAEMS_POWER_MODE_LIGHT;
+    } else if (strcmp(value, "battery") == 0) {
+        *mode = SAEMS_POWER_MODE_BATTERY;
+    } else {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return ESP_OK;
+}
 
 static SemaphoreHandle_t manager_mutex(config_manager_t *manager)
 {
@@ -192,6 +225,10 @@ static esp_err_t save_locked(config_manager_t *manager)
     }
     if (result == ESP_OK) {
         result = nvs_set_u8(
+            handle, "soil_cal", manager->current.soil_calibrated ? 1 : 0);
+    }
+    if (result == ESP_OK) {
+        result = nvs_set_u8(
             handle, "ap_on", manager->current.ap_enabled ? 1 : 0);
     }
     if (result == ESP_OK) {
@@ -203,6 +240,10 @@ static esp_err_t save_locked(config_manager_t *manager)
             handle,
             "power_save",
             manager->current.power_save_enabled ? 1 : 0);
+    }
+    if (result == ESP_OK) {
+        result = nvs_set_u8(
+            handle, "power_mode", (uint8_t)manager->current.power_mode);
     }
     if (result == ESP_OK) {
         result = nvs_commit(handle);
@@ -249,9 +290,18 @@ esp_err_t config_manager_init(
         load_i32(handle, "soil_dry", &manager->current.soil_dry_raw);
         load_i32(handle, "soil_wet", &manager->current.soil_wet_raw);
         load_bool(handle, "soil_on", &manager->current.soil_enabled);
+        /* Missing key means uncalibrated; old placeholder endpoints must not
+         * silently become a measured percentage after a firmware upgrade. */
+        load_bool(handle, "soil_cal", &manager->current.soil_calibrated);
         load_bool(handle, "ap_on", &manager->current.ap_enabled);
         load_bool(handle, "ble_on", &manager->current.ble_enabled);
         load_bool(handle, "power_save", &manager->current.power_save_enabled);
+        uint8_t stored_power_mode = 0;
+        if (nvs_get_u8(handle, "power_mode", &stored_power_mode) == ESP_OK &&
+            stored_power_mode <= SAEMS_POWER_MODE_BATTERY) {
+            manager->current.power_mode =
+                (saems_power_mode_t)stored_power_mode;
+        }
         nvs_close(handle);
     } else if (result != ESP_ERR_NVS_NOT_FOUND) {
         return result;
@@ -376,6 +426,23 @@ esp_err_t config_manager_update_json(
         xSemaphoreGive(manager_mutex(manager));
         return parse_result;
     }
+    const bool dry_supplied = json_value(document, "soil_dry_raw") != NULL;
+    const bool wet_supplied = json_value(document, "soil_wet_raw") != NULL;
+    if (dry_supplied || wet_supplied) {
+        updated.soil_calibrated = false;
+    }
+    parse_result = parse_optional_bool(
+        document, "soil_calibrated", &updated.soil_calibrated);
+    if (parse_result != ESP_OK && parse_result != ESP_ERR_NOT_FOUND) {
+        xSemaphoreGive(manager_mutex(manager));
+        return parse_result;
+    }
+    if (parse_result == ESP_OK && updated.soil_calibrated &&
+        (!updated.soil_enabled || !dry_supplied || !wet_supplied ||
+         abs(updated.soil_dry_raw - updated.soil_wet_raw) < 100)) {
+        xSemaphoreGive(manager_mutex(manager));
+        return ESP_ERR_INVALID_ARG;
+    }
     parse_result = parse_optional_bool(
         document, "ap_enabled", &updated.ap_enabled);
     if (parse_result != ESP_OK && parse_result != ESP_ERR_NOT_FOUND) {
@@ -390,6 +457,17 @@ esp_err_t config_manager_update_json(
     }
     parse_result = parse_optional_bool(
         document, "power_save_enabled", &updated.power_save_enabled);
+    if (parse_result != ESP_OK && parse_result != ESP_ERR_NOT_FOUND) {
+        xSemaphoreGive(manager_mutex(manager));
+        return parse_result;
+    }
+    char power_mode[16];
+    parse_result = parse_optional_string(
+        document, "power_mode", power_mode, sizeof(power_mode));
+    if (parse_result == ESP_OK) {
+        parse_result = saems_power_mode_from_string(
+            power_mode, &updated.power_mode);
+    }
     if (parse_result != ESP_OK && parse_result != ESP_ERR_NOT_FOUND) {
         xSemaphoreGive(manager_mutex(manager));
         return parse_result;
@@ -426,18 +504,28 @@ esp_err_t config_manager_to_json(
         output_size,
         "{\"device_id\":\"%s\",\"telemetry_interval_s\":%" PRIu32
         ",\"soil_dry_raw\":%d,\"soil_wet_raw\":%d,"
-        "\"soil_enabled\":%s,\"ap_enabled\":%s,"
+        "\"soil_enabled\":%s,\"soil_calibrated\":%s,"
+        "\"soil_raw_readout_enabled\":%s,\"ap_enabled\":%s,"
         "\"ble_enabled\":%s,\"power_save_enabled\":%s,"
+        "\"power_mode\":\"%s\","
         "\"wifi_configured\":%s,\"mqtt_configured\":%s,"
-        "\"ap_password_configured\":%s,\"restart_required\":true}",
+        "\"ap_password_configured\":%s,\"restart_required\":true,"
+        "\"power_mode_applies_next_cycle\":true}",
         config.device_id,
         config.telemetry_interval_s,
         config.soil_dry_raw,
         config.soil_wet_raw,
         config.soil_enabled ? "true" : "false",
+        config.soil_calibrated ? "true" : "false",
+#ifdef CONFIG_SAEMS_SOIL_RAW_READOUT_ENABLED
+        "true",
+#else
+        "false",
+#endif
         config.ap_enabled ? "true" : "false",
         config.ble_enabled ? "true" : "false",
         config.power_save_enabled ? "true" : "false",
+        saems_power_mode_name(config.power_mode),
         config.wifi_ssid[0] != '\0' ? "true" : "false",
         config.mqtt_uri[0] != '\0' ? "true" : "false",
         strlen(config.ap_password) >= 8 ? "true" : "false");

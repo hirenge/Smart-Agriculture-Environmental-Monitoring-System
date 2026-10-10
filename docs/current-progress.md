@@ -1,5 +1,37 @@
 # SAEMS – trạng thái mã nguồn đã chuẩn hóa
 
+## Power Manager runtime ngày 2026-10-10 — build đạt, chưa flash bản này
+
+- Một firmware hiện chứa đủ `direct`, `light` và `battery`; app đổi `power_mode`
+  qua BLE/AP, Config Manager lưu NVS và Application Manager áp dụng ở ranh giới
+  chu kỳ lấy mẫu mà không cần build/flash lại.
+- `light` dùng DFS + automatic Light Sleep + tickless idle. `battery` cho BLE/AP
+  và MQTT một cửa sổ thức ngắn, lưu telemetry trước, rồi timer Deep Sleep; BLE
+  đang kết nối sẽ hoãn ngủ để tránh cắt ngang cấu hình.
+- Firmware ESP-IDF build đạt. Flutter analyze không lỗi và 21 tests đạt, gồm kiểm
+  tra truyền/đọc lại `power_mode` qua BLE/AP và model app.
+- Chưa flash/nghiệm thu bản runtime này trên board. Cần đo dòng thực tế cho Direct,
+  Light và pha Deep Sleep sau khi có pin/thiết bị đo.
+
+Hướng dẫn chuyển mode và nghiệm thu:
+[power-management-demo.md](power-management-demo.md).
+
+## Chuẩn bị LM393 ngày 2026-10-09 — build đạt, chưa flash
+
+Que đo đã gắn; chưa có ADC khô/ướt. Thêm raw readout, `soil_calibrated` trong NVS,
+trạng thái `uncalibrated` và guard không xuất % bằng các mốc giữ chỗ. Server
+đã có hỗ trợ raw/digital, không thay schema. Firmware build đạt, 15 checks C đạt.
+App analyze không lỗi, 20 tests đạt; có test raw soil chưa hiệu chuẩn giữ null.
+Thiết bị tại thời điểm đọc UART đang chạy lại SMARTFARM cũ có payload giả lập.
+USB mất kết nối trong backup, chưa erase/flash; người dùng chọn cắm lại sau.
+Kết quả flash/đọc cảm biến thật ở phiên trước bên dưới là lịch sử, không phải
+bằng chứng của thiết bị đang kết nối trong phiên này.
+
+Chi tiết, lệnh build và demo:
+[lm393-build-calibration-demo.md](lm393-build-calibration-demo.md).
+Lệnh chạy ngắn gọn cho ba thành phần:
+[scripts/windows/RUN-DEMO.md](../scripts/windows/RUN-DEMO.md).
+
 ## Hiện tại: đã flash và kiểm thử firmware mới
 
 - Firmware modular SAEMS đã build/flash COM3, không phải project hello_world.
@@ -8,6 +40,9 @@
   Pixel_6 đã kiểm thử Dashboard/lịch sử. APK cuối cài trên cả hai, 19 tests đạt.
 - Đã sửa SNTP trước IP/thiếu kiểm tra ngày certificate, NimBLE stack overflow
   khi lưu config, stream BLE sau dispose và Settings khởi tạo nhầm Mock.
+- Power Manager có ba mode runtime trong cùng firmware; Config Manager lưu lựa
+  chọn vào NVS. Battery lưu trước khi sync, có cửa sổ BLE/AP và sync hữu hạn rồi
+  Deep Sleep, giữ `boot_id/seq` trong RTC memory giữa các lần timer wake.
 - LM393 vẫn disabled/null. Không gửi lệnh relay; chưa nghiệm thu cold power-cycle,
   offline FIFO qua mất điện, đổi Wi-Fi ESP32 hoặc sleep/wake/đo dòng.
 - REST provisioning còn nghe trên STA, chưa có owner authentication; BLE Just
@@ -143,8 +178,9 @@ không còn chỉ là compile. Relay GPIO10/GPIO11 có boot OFF trong source nh�
 kiểm thử tiếp điểm/tải hoặc active level. LM393 tắt vì thiếu que và hai mốc ADC;
 `soil_moisture_pct` là `null`.
 
-Gửi bù qua mất điện, queue đầy, light/deep sleep, đo dòng và wake/reconnect vẫn
-chưa nghiệm thu. Quan sát startup buffering/PUBACK và warm reset không thay thế
+Gửi bù qua mất điện, queue đầy, đo dòng và wake/reconnect của mode Battery vẫn
+chưa nghiệm thu trên board. Light/deep sleep đã hiện thực và build đạt nhưng build
+không thay thế phép đo phần cứng. Quan sát startup buffering/PUBACK và warm reset không thay thế
 kiểm thử NVS khi mất điện. REST local cần giới hạn interface AP/xác thực owner;
 BLE encrypted Just Works chưa cung cấp owner/MITM authentication.
 

@@ -19,6 +19,7 @@ class ConfigurableBleAdapter extends FakeBleAdapter
   Future<Map<String, dynamic>> readDeviceConfig() async => {
     'device_id': 'farm-01',
     'telemetry_interval_s': 10,
+    'power_mode': 'direct',
   };
 
   @override
@@ -51,8 +52,15 @@ void main() {
     final transport = BleDeviceTransport(adapter);
     expect((await transport.readDeviceInfo())['device_id'], 'farm-01');
     expect((await transport.readDeviceConfig())['telemetry_interval_s'], 10);
-    await transport.writeDeviceConfig({'wifi_ssid': 'new-network'});
-    expect(adapter.written, {'wifi_ssid': 'new-network'});
+    expect((await transport.readDeviceConfig())['power_mode'], 'direct');
+    await transport.writeDeviceConfig({
+      'wifi_ssid': 'new-network',
+      'power_mode': 'light',
+    });
+    expect(adapter.written, {
+      'wifi_ssid': 'new-network',
+      'power_mode': 'light',
+    });
     await transport.setPump('farm-01', enabled: false, durationSeconds: 0);
     expect(adapter.lastCommand?['state'], 'off');
     await adapter.dispose();
@@ -69,7 +77,11 @@ void main() {
             Response(
               requestOptions: request,
               statusCode: 200,
-              data: {'device_id': 'farm-01', 'telemetry_interval_s': 10},
+              data: {
+                'device_id': 'farm-01',
+                'telemetry_interval_s': 10,
+                'power_mode': 'battery',
+              },
             ),
           );
         },
@@ -77,9 +89,16 @@ void main() {
     );
     final transport = WifiApDeviceTransport(dio: dio);
     expect((await transport.readDeviceConfig())['device_id'], 'farm-01');
-    await transport.writeDeviceConfig({'wifi_ssid': 'hotspot'});
+    expect((await transport.readDeviceConfig())['power_mode'], 'battery');
+    await transport.writeDeviceConfig({
+      'wifi_ssid': 'hotspot',
+      'power_mode': 'direct',
+    });
     expect(write?.path, '/v1/config');
-    expect(write?.data, {'wifi_ssid': 'hotspot'});
+    expect(write?.data, {
+      'wifi_ssid': 'hotspot',
+      'power_mode': 'direct',
+    });
     await transport.disconnect();
   });
 

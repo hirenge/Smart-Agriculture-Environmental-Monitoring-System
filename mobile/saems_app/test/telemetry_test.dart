@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:saems_app/src/models/device_models.dart';
 import 'package:saems_app/src/models/telemetry.dart';
 
 void main() {
@@ -50,6 +51,22 @@ void main() {
       );
     });
 
+    test('uncalibrated soil raw payload never becomes a fake percentage', () {
+      final telemetry = Telemetry.fromJson({
+        'device_id': 'farm-01',
+        'data_mode': 'real',
+        'sensor_health': 'degraded',
+        'sensor_status': {'soil': 'uncalibrated'},
+        'soil_raw': 2100,
+        'soil_digital': true,
+        'soil_moisture_pct': null,
+      });
+      expect(telemetry.dataMode, DataMode.real);
+      expect(telemetry.sensorHealth, SensorHealth.degraded);
+      expect(telemetry.soilMoisturePct, isNull);
+      expect(Telemetry.decode(telemetry.encode()).soilMoisturePct, isNull);
+    });
+
     test('detects stale telemetry', () {
       final telemetry = Telemetry.fromJson({
         'device_id': 'farm-01',
@@ -57,5 +74,15 @@ void main() {
       });
       expect(telemetry.isStale(DateTime.utc(2026, 10, 2, 8, 16)), isTrue);
     });
+  });
+
+  test('DeviceConfig preserves the runtime power mode', () {
+    final config = DeviceConfig.fromJson({
+      'device_id': 'farm-01',
+      'telemetry_interval_s': 60,
+      'power_mode': 'battery',
+    });
+    expect(config.powerMode, 'battery');
+    expect(config.toJson()['power_mode'], 'battery');
   });
 }

@@ -4,9 +4,18 @@ Read Wi-Fi from the old local SDK config and device MQTT login from the private
 export. Never display values. Preserve the previous SDK config in .local.
 """
 import json
+import argparse
 from pathlib import Path
 import secrets
 import shutil
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--soil-raw", action="store_true",
+                    help="Probe attached: enable raw ADC readout, not calibrated percent")
+parser.add_argument("--power-profile", choices=("direct", "light", "battery"),
+                    default="direct",
+                    help="Direct keeps BLE/AP, light enables automatic Light Sleep, battery uses timer Deep Sleep")
+args = parser.parse_args()
 
 repo = Path(__file__).resolve().parents[2]
 private = repo / ".local"
@@ -33,6 +42,38 @@ else:
 backup = private / "sdkconfig-before-hardware-test"
 if not backup.exists():
     shutil.copy2(config_path, backup)
+profile_settings = {
+    "direct": {
+        "CONFIG_SAEMS_POWER_MODE_ACTIVE": "n",
+        "CONFIG_SAEMS_POWER_MODE_MODEM_SAVE": "y",
+        "CONFIG_SAEMS_POWER_MODE_LIGHT_SLEEP": "n",
+        "CONFIG_SAEMS_POWER_MODE_DEEP_SLEEP": "n",
+        "CONFIG_PM_ENABLE": "y",
+        "CONFIG_FREERTOS_USE_TICKLESS_IDLE": "y",
+        "CONFIG_SAEMS_BLE_ENABLED": "y",
+        "CONFIG_SAEMS_AP_ENABLED": "y",
+    },
+    "light": {
+        "CONFIG_SAEMS_POWER_MODE_ACTIVE": "n",
+        "CONFIG_SAEMS_POWER_MODE_MODEM_SAVE": "n",
+        "CONFIG_SAEMS_POWER_MODE_LIGHT_SLEEP": "y",
+        "CONFIG_SAEMS_POWER_MODE_DEEP_SLEEP": "n",
+        "CONFIG_PM_ENABLE": "y",
+        "CONFIG_FREERTOS_USE_TICKLESS_IDLE": "y",
+        "CONFIG_SAEMS_BLE_ENABLED": "y",
+        "CONFIG_SAEMS_AP_ENABLED": "y",
+    },
+    "battery": {
+        "CONFIG_SAEMS_POWER_MODE_ACTIVE": "n",
+        "CONFIG_SAEMS_POWER_MODE_MODEM_SAVE": "n",
+        "CONFIG_SAEMS_POWER_MODE_LIGHT_SLEEP": "n",
+        "CONFIG_SAEMS_POWER_MODE_DEEP_SLEEP": "y",
+        "CONFIG_PM_ENABLE": "y",
+        "CONFIG_FREERTOS_USE_TICKLESS_IDLE": "y",
+        "CONFIG_SAEMS_BLE_ENABLED": "y",
+        "CONFIG_SAEMS_AP_ENABLED": "y",
+    },
+}
 settings = {
     "CONFIG_SAEMS_WIFI_SSID": json.dumps(old["CONFIG_SMARTFARM_WIFI_SSID"]),
     "CONFIG_SAEMS_WIFI_PASSWORD": json.dumps(old.get("CONFIG_SMARTFARM_WIFI_PASSWORD", "")),
@@ -40,15 +81,20 @@ settings = {
     "CONFIG_SAEMS_MQTT_USERNAME": json.dumps(access["mqtt_username"]),
     "CONFIG_SAEMS_MQTT_PASSWORD": json.dumps(access["mqtt_password"]),
     "CONFIG_SAEMS_DEVICE_ID": json.dumps(access["device_id"]),
-    "CONFIG_SAEMS_BLE_ENABLED": "y",
-    "CONFIG_SAEMS_AP_ENABLED": "y",
     "CONFIG_SAEMS_AP_PASSWORD": json.dumps(ap_access["password"]),
-    "CONFIG_SAEMS_SOIL_SENSOR_ENABLED": "n",
+    "CONFIG_SAEMS_POWER_SAVE_ENABLED": "y",
+    "CONFIG_SAEMS_DEEP_SLEEP_SYNC_WINDOW_SECONDS": "15",
+    "CONFIG_SAEMS_BATTERY_MAINTENANCE_WINDOW_SECONDS": "10",
+    "CONFIG_SAEMS_SOIL_SENSOR_ENABLED": "y" if args.soil_raw else "n",
+    "CONFIG_SAEMS_SOIL_RAW_READOUT_ENABLED": "y" if args.soil_raw else "n",
+    "CONFIG_SAEMS_SOIL_DRY_RAW": "3000",
+    "CONFIG_SAEMS_SOIL_WET_RAW": "1200",
     "CONFIG_MBEDTLS_HAVE_TIME_DATE": "y",
     "CONFIG_LWIP_SNTP_MAX_SERVERS": "3",
     "CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE": "8192",
     "CONFIG_BT_NIMBLE_TASK_STACK_SIZE": "8192",
 }
+settings.update(profile_settings[args.power_profile])
 lines = []
 seen = set()
 for line in config_path.read_text(encoding="utf-8").splitlines():
@@ -64,5 +110,8 @@ for key in settings.keys() - seen:
     value = settings[key]
     lines.append(f"# {key} is not set" if value == "n" else f"{key}={value}")
 config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-print("Prepared ignored SDK config: MQTT TLS, BLE and password-protected AP; soil disabled")
+print("Prepared ignored SDK config: MQTT TLS, default power mode=" +
+      args.power_profile + " (all runtime modes compiled); soil " +
+      ("raw readout enabled (percentage requires measured calibration)" if args.soil_raw
+       else "disabled"))
 print("Original SDK config backed up privately; credential values omitted")

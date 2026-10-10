@@ -13,6 +13,12 @@
 #define SAEMS_MQTT_USERNAME_MAX_LEN 64
 #define SAEMS_MQTT_PASSWORD_MAX_LEN 64
 
+typedef enum {
+    SAEMS_POWER_MODE_DIRECT = 0,
+    SAEMS_POWER_MODE_LIGHT,
+    SAEMS_POWER_MODE_BATTERY,
+} saems_power_mode_t;
+
 typedef struct {
     char device_id[SAEMS_DEVICE_ID_MAX_LEN + 1];
     char wifi_ssid[SAEMS_WIFI_SSID_MAX_LEN + 1];
@@ -26,9 +32,11 @@ typedef struct {
     int soil_dry_raw;
     int soil_wet_raw;
     bool soil_enabled;
+    bool soil_calibrated;
     bool ap_enabled;
     bool ble_enabled;
     bool power_save_enabled;
+    saems_power_mode_t power_mode;
 } saems_config_t;
 
 typedef struct {
@@ -49,3 +57,6 @@ esp_err_t config_manager_to_json(
     config_manager_t *manager,
     char *output,
     size_t output_size);
+const char *saems_power_mode_name(saems_power_mode_t mode);
+esp_err_t saems_power_mode_from_string(
+    const char *value, saems_power_mode_t *mode);

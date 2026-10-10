@@ -18,6 +18,7 @@ class _ProvisioningScreenState extends ConsumerState<ProvisioningScreen> {
   final _mqttUser = TextEditingController();
   final _mqttPassword = TextEditingController();
   final _interval = TextEditingController(text: '10');
+  String _powerMode = 'direct';
   bool _busy = false;
   String _message = 'Đọc cấu hình để kiểm tra kết nối trước khi lưu.';
 
@@ -50,7 +51,10 @@ class _ProvisioningScreenState extends ConsumerState<ProvisioningScreen> {
         if (interval == null || interval < 1 || interval > 3600) {
           throw const FormatException('Chu kỳ gửi phải từ 1 đến 3600 giây.');
         }
-        final config = <String, dynamic>{'telemetry_interval_s': interval};
+        final config = <String, dynamic>{
+          'telemetry_interval_s': interval,
+          'power_mode': _powerMode,
+        };
         if (_ssid.text.trim().isNotEmpty) {
           config['wifi_ssid'] = _ssid.text.trim();
           config['wifi_password'] = _wifiPassword.text;
@@ -82,17 +86,23 @@ class _ProvisioningScreenState extends ConsumerState<ProvisioningScreen> {
         _mqttPassword.clear();
         if (mounted) {
           setState(
-            () => _message =
-                'Đã lưu vào ESP32. Khởi động lại ESP32 để áp dụng Wi-Fi/MQTT.',
+            () => _message = 'Đã lưu vào ESP32. Chế độ năng lượng áp dụng ở cuối chu kỳ lấy mẫu; Wi-Fi/MQTT mới cần khởi động lại.',
           );
         }
       } else {
         final config = await direct.readDeviceConfig();
         _interval.text = '${config['telemetry_interval_s'] ?? 10}';
+        final powerMode = config['power_mode']?.toString();
+        if (powerMode == 'direct' ||
+            powerMode == 'light' ||
+            powerMode == 'battery') {
+          _powerMode = powerMode!;
+        }
         if (mounted) {
           setState(
             () => _message =
                 'Thiết bị: ${config['device_id']}\n'
+                'Chế độ năng lượng: $_powerMode\n'
                 'Wi-Fi đã cấu hình: ${config['wifi_configured'] == true}\n'
                 'MQTT đã cấu hình: ${config['mqtt_configured'] == true}',
           );
@@ -134,6 +144,31 @@ class _ProvisioningScreenState extends ConsumerState<ProvisioningScreen> {
         _field(_mqttUser, 'MQTT username'),
         _field(_mqttPassword, 'MQTT password', secret: true),
         _field(_interval, 'Chu kỳ telemetry (giây)'),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: DropdownButtonFormField<String>(
+            key: ValueKey(_powerMode),
+            initialValue: _powerMode,
+            decoration: const InputDecoration(labelText: 'Chế độ năng lượng'),
+            items: const [
+              DropdownMenuItem(
+                value: 'direct',
+                child: Text('Direct – kết nối liên tục'),
+              ),
+              DropdownMenuItem(
+                value: 'light',
+                child: Text('Light Sleep giữa các chu kỳ'),
+              ),
+              DropdownMenuItem(
+                value: 'battery',
+                child: Text('Battery – Deep Sleep'),
+              ),
+            ],
+            onChanged: _busy
+                ? null
+                : (value) => setState(() => _powerMode = value ?? 'direct'),
+          ),
+        ),
         OutlinedButton(
           onPressed: _busy ? null : () => _run(false),
           child: const Text('Đọc cấu hình thiết bị'),

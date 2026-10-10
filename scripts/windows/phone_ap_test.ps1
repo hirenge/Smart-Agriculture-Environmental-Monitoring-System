@@ -1,36 +1,59 @@
-param([ValidateSet('Connect','Restore')][string]$Action = 'Connect')
+param(
+    [ValidateSet('Connect', 'Restore')]
+    [string]$Action = 'Connect',
+    [string]$Serial
+)
+
 $ErrorActionPreference = 'Stop'
 $saemsAdb = 'C:\Users\Tien An\AppData\Local\Android\Sdk\platform-tools\adb.exe'
-$saemsPhone = 'R58W80K3NWK'
 $saemsRepo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$saemsOld = @{}
-foreach ($saemsLine in (Get-Content -LiteralPath (Join-Path $saemsRepo '..\sdkconfig'))) {
-    if ($saemsLine -match '^(CONFIG_SMARTFARM_WIFI_(SSID|PASSWORD))=(.*)$') {
-        $saemsOld[$Matches[1]] = ConvertFrom-Json $Matches[3]
-    }
-}
+$saemsAccessPath = Join-Path $saemsRepo '.local\firmware-ap-access.json'
 $saemsStatePath = Join-Path $saemsRepo '.local\phone-network-before-ap.json'
+
+function Resolve-SaemsPhone {
+    if ($Serial) { return $Serial }
+    $saemsDevice = & $saemsAdb devices | Select-Object -Skip 1 |
+        Where-Object { $_ -match "\tdevice\s*$" -and $_ -notmatch '^emulator-' } |
+        Select-Object -First 1
+    if (-not $saemsDevice) { throw 'Physical Android phone was not found through ADB.' }
+    return ($saemsDevice -split '\s+')[0]
+}
+
+if (-not (Test-Path -LiteralPath $saemsAdb)) { throw 'ADB was not found.' }
+$saemsPhone = Resolve-SaemsPhone
+
 if ($Action -eq 'Connect') {
-    $saemsStatus = (& $saemsAdb -s $saemsPhone shell cmd wifi status) -join "`n"
-    $saemsExpected = [regex]::Escape($saemsOld['CONFIG_SMARTFARM_WIFI_SSID'])
-    if ($saemsStatus -notmatch ('Wifi is connected to "' + $saemsExpected + '"')) {
-        throw 'Phone is not on the known original Wi-Fi; restore plan requires user input'
+    if (-not (Test-Path -LiteralPath $saemsAccessPath)) {
+        throw 'Missing .local/firmware-ap-access.json.'
     }
-    # This is generated runtime state, not a checked-in configuration file.
+    $saemsAp = Get-Content -LiteralPath $saemsAccessPath -Raw | ConvertFrom-Json
     [PSCustomObject]@{
+        serial = $saemsPhone
         wifi = (& $saemsAdb -s $saemsPhone shell settings get global wifi_on).Trim()
         mobileData = (& $saemsAdb -s $saemsPhone shell settings get global mobile_data).Trim()
     } | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath $saemsStatePath
-    $saemsAp = Get-Content (Join-Path $saemsRepo '.local\firmware-ap-access.json') -Raw | ConvertFrom-Json
+
     & $saemsAdb -s $saemsPhone shell svc data disable | Out-Null
+    & $saemsAdb -s $saemsPhone shell svc wifi enable | Out-Null
     & $saemsAdb -s $saemsPhone shell cmd wifi connect-network $saemsAp.ssid wpa2 $saemsAp.password | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'AP connect request failed; run Restore' }
-    Write-Output 'Requested password-protected ESP32 AP connection; cellular data temporarily disabled'
+    if ($LASTEXITCODE -ne 0) { throw 'Could not request the ESP32 Wi-Fi AP connection.' }
+    Start-Sleep -Seconds 5
+    Write-Host 'AP TEST READY: mobile data OFF; phone requested ESP32 AP. Credentials omitted.'
+    & $saemsAdb -s $saemsPhone shell cmd wifi status
 } else {
-    $saemsState = Get-Content $saemsStatePath -Raw | ConvertFrom-Json
-    & $saemsAdb -s $saemsPhone shell cmd wifi connect-network $saemsOld['CONFIG_SMARTFARM_WIFI_SSID'] wpa2 $saemsOld['CONFIG_SMARTFARM_WIFI_PASSWORD'] | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Original Wi-Fi restore request failed' }
-    if ($saemsState.mobileData -eq '1') { & $saemsAdb -s $saemsPhone shell svc data enable | Out-Null }
-    if ($saemsState.wifi -eq '0') { & $saemsAdb -s $saemsPhone shell svc wifi disable | Out-Null }
-    Write-Output 'Requested original Wi-Fi and cellular-data restoration; credentials omitted'
+    if (-not (Test-Path -LiteralPath $saemsStatePath)) { throw 'No saved phone network state to restore.' }
+    $saemsState = Get-Content -LiteralPath $saemsStatePath -Raw | ConvertFrom-Json
+    & $saemsAdb -s $saemsPhone shell cmd wifi disconnect | Out-Null
+    if ($saemsState.wifi -eq '1') {
+        & $saemsAdb -s $saemsPhone shell svc wifi enable | Out-Null
+        & $saemsAdb -s $saemsPhone shell cmd wifi reconnect | Out-Null
+    } else {
+        & $saemsAdb -s $saemsPhone shell svc wifi disable | Out-Null
+    }
+    if ($saemsState.mobileData -eq '1') {
+        & $saemsAdb -s $saemsPhone shell svc data enable | Out-Null
+    } else {
+        & $saemsAdb -s $saemsPhone shell svc data disable | Out-Null
+    }
+    Write-Host 'PHONE NETWORK RESTORED.'
 }

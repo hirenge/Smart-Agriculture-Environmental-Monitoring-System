@@ -85,6 +85,7 @@ esp_err_t data_manager_build_telemetry(
     char humidity_json[24];
     char soil_json[24];
     char light_json[24];
+    char soil_raw_json[16];
     char timestamp_json[32];
     const char *timestamp_source = NULL;
 
@@ -106,6 +107,11 @@ esp_err_t data_manager_build_telemetry(
                       snapshot->light_lux);
     (void)format_timestamp(
         timestamp_json, sizeof(timestamp_json), &timestamp_source);
+    if (snapshot->soil_raw_valid) {
+        (void)snprintf(soil_raw_json, sizeof(soil_raw_json), "%d", snapshot->soil_raw);
+    } else {
+        (void)snprintf(soil_raw_json, sizeof(soil_raw_json), "null");
+    }
 
     const uint64_t uptime_ms = (uint64_t)esp_timer_get_time() / 1000ULL;
     int length = snprintf(
@@ -127,6 +133,8 @@ esp_err_t data_manager_build_telemetry(
         "\"temperature_c\":%s,"
         "\"humidity_pct\":%s,"
         "\"soil_moisture_pct\":%s,"
+        "\"soil_raw\":%s,"
+        "\"soil_digital\":%s,"
         "\"light_lux\":%s,"
         "\"battery_pct\":null,"
         "\"pump_state\":\"%s\"}",
@@ -144,6 +152,8 @@ esp_err_t data_manager_build_telemetry(
         temperature_json,
         humidity_json,
         soil_json,
+        soil_raw_json,
+        snapshot->soil_raw_valid ? (snapshot->soil_digital ? "true" : "false") : "null",
         light_json,
         metadata->pump_state);
 

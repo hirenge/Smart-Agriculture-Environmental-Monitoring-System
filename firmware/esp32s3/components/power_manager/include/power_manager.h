@@ -19,6 +19,10 @@ typedef struct {
 
 esp_err_t power_manager_init(
     power_manager_t *manager, power_manager_mode_t mode);
+esp_err_t power_manager_set_mode(
+    power_manager_t *manager, power_manager_mode_t mode);
+const char *power_manager_mode_name(power_manager_mode_t mode);
+bool power_manager_is_deep_sleep(const power_manager_t *manager);
 esp_err_t power_manager_idle(
     power_manager_t *manager,
     uint32_t interval_seconds,

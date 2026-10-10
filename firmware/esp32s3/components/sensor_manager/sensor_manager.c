@@ -1,6 +1,7 @@
 #include "sensor_manager.h"
 
 #include <string.h>
+#include <math.h>
 
 #include "esp_log.h"
 
@@ -30,6 +31,8 @@ const char *sensor_health_to_string(sensor_health_t health)
         return "ok";
     case SENSOR_HEALTH_ERROR:
         return "error";
+    case SENSOR_HEALTH_UNCALIBRATED:
+        return "uncalibrated";
     case SENSOR_HEALTH_UNAVAILABLE:
     default:
         return "unavailable";
@@ -47,6 +50,7 @@ esp_err_t sensor_manager_init(
 
     memset(manager, 0, sizeof(*manager));
     manager->soil_enabled = config->soil_enabled;
+    manager->soil_calibrated = config->soil_calibrated;
 
     const i2c_master_bus_config_t bus_config = {
         .i2c_port = config->i2c_port,
@@ -165,16 +169,25 @@ esp_err_t sensor_manager_read_all(
             &snapshot->soil_moisture_pct,
             &snapshot->soil_raw,
             &snapshot->soil_digital);
-        snapshot->soil_moisture_valid = result == ESP_OK;
+        snapshot->soil_raw_valid = result == ESP_OK;
+        snapshot->soil_moisture_valid = result == ESP_OK && manager->soil_calibrated &&
+                                        isfinite(snapshot->soil_moisture_pct);
         snapshot->soil_health = result == ESP_OK
-                                    ? SENSOR_HEALTH_OK
+                                    ? (manager->soil_calibrated
+                                           ? (snapshot->soil_moisture_valid
+                                                  ? SENSOR_HEALTH_OK
+                                                  : SENSOR_HEALTH_ERROR)
+                                           : SENSOR_HEALTH_UNCALIBRATED)
                                     : SENSOR_HEALTH_ERROR;
         if (result == ESP_OK) {
-            ESP_LOGI(TAG,
-                     "LM393 raw=%d pct=%.1f DO=%d",
-                     snapshot->soil_raw,
-                     snapshot->soil_moisture_pct,
-                     snapshot->soil_digital);
+            if (snapshot->soil_moisture_valid) {
+                ESP_LOGI(TAG, "LM393 raw=%d pct=%.1f DO=%d",
+                         snapshot->soil_raw, snapshot->soil_moisture_pct,
+                         snapshot->soil_digital);
+            } else {
+                ESP_LOGI(TAG, "LM393 raw=%d DO=%d calibration=pending; pct=null",
+                         snapshot->soil_raw, snapshot->soil_digital);
+            }
         } else {
             ESP_LOGW(TAG, "LM393 read failed: %s", esp_err_to_name(result));
         }

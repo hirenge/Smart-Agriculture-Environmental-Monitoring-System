@@ -40,7 +40,8 @@ reported as a real zero:
 - `battery_pct`, `pump_state`
 - `sensor_health`: `ok`, `degraded`, or `unavailable`
 - `sensor_status`: trạng thái `dht20`, `bh1750`, `soil` riêng lẻ; mỗi giá trị là
-  `ok`, `error`, hoặc `unavailable`.
+  `ok`, `error`, `unavailable`, hoặc `uncalibrated` (soil đọc được ADC nhưng chưa
+  có hai mốc hiệu chuẩn đã xác nhận; phần trăm vẫn `null`).
 - `boot_id`, `seq`, `received_at`
 
 The app accepts the current legacy response with no `schema_version`,

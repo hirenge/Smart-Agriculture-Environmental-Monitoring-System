@@ -31,12 +31,14 @@ class DeviceConfig {
     this.telemetryIntervalSeconds = 10,
     this.soilDryRaw,
     this.soilWetRaw,
+    this.powerMode = 'direct',
   });
 
   final String deviceId;
   final int telemetryIntervalSeconds;
   final int? soilDryRaw;
   final int? soilWetRaw;
+  final String powerMode;
 
   factory DeviceConfig.fromJson(Map<String, dynamic> json) => DeviceConfig(
     deviceId: json['device_id']?.toString() ?? '',
@@ -44,6 +46,7 @@ class DeviceConfig {
         int.tryParse(json['telemetry_interval_s']?.toString() ?? '') ?? 10,
     soilDryRaw: int.tryParse(json['soil_dry_raw']?.toString() ?? ''),
     soilWetRaw: int.tryParse(json['soil_wet_raw']?.toString() ?? ''),
+    powerMode: json['power_mode']?.toString() ?? 'direct',
   );
 
   Map<String, dynamic> toJson() => {
@@ -51,6 +54,7 @@ class DeviceConfig {
     'telemetry_interval_s': telemetryIntervalSeconds,
     'soil_dry_raw': soilDryRaw,
     'soil_wet_raw': soilWetRaw,
+    'power_mode': powerMode,
   };
 }
 

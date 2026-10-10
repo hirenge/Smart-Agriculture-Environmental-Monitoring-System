@@ -14,6 +14,7 @@ typedef enum {
     SENSOR_HEALTH_UNAVAILABLE = 0,
     SENSOR_HEALTH_OK,
     SENSOR_HEALTH_ERROR,
+    SENSOR_HEALTH_UNCALIBRATED,
 } sensor_health_t;
 
 typedef struct {
@@ -22,6 +23,7 @@ typedef struct {
     gpio_num_t i2c_scl;
     uint8_t bh1750_address;
     bool soil_enabled;
+    bool soil_calibrated;
     int soil_dry_raw;
     int soil_wet_raw;
 } sensor_manager_config_t;
@@ -38,6 +40,7 @@ typedef struct {
     bool humidity_valid;
     bool light_valid;
     bool soil_moisture_valid;
+    bool soil_raw_valid;
 
     sensor_health_t dht20_health;
     sensor_health_t bh1750_health;
@@ -54,6 +57,7 @@ typedef struct {
     bool bh1750_ready;
     bool soil_enabled;
     bool soil_ready;
+    bool soil_calibrated;
 } sensor_manager_t;
 
 esp_err_t sensor_manager_init(

@@ -44,6 +44,22 @@ Config writes may contain Wi-Fi/MQTT/AP credentials and manager settings. Secret
 values are persisted but never returned by `GET /v1/config`. Transport and sensor
 changes become fully active after device restart.
 
+The same firmware supports runtime `power_mode` values `direct`, `light`, and
+`battery`. This field is persisted in NVS and is the exception to the general
+restart rule: it is re-read and applied at the next sampling boundary. Battery
+mode keeps a short awake maintenance window for BLE/AP and sync, then enters
+timer Deep Sleep. An active BLE connection postpones Deep Sleep so the app can
+finish configuration; disconnect after saving Battery mode.
+
+Soil calibration: config exposes `soil_calibrated` and build-time
+`soil_raw_readout_enabled`. To confirm measured calibration, send
+`soil_enabled=true`, `soil_calibrated=true`, `soil_dry_raw` and `soil_wet_raw`
+together (0..4095, endpoint span >=100 counts). Changing endpoints without
+confirmation clears calibration. Missing NVS calibration flag means false.
+Reboot applies the sensor settings. With a probe attached and raw readout on,
+telemetry includes raw/digital even if old NVS disabled soil; percentage stays
+null and soil status is `uncalibrated` until measured calibration is confirmed.
+
 Config/command writes require an encrypted BLE link. Android bonds before
 writing; ESP32 persists bond keys in NVS. No-input/no-output Just Works pairing
 does not authenticate the owner's identity or provide MITM protection; provision

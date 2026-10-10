@@ -51,12 +51,51 @@ config SAEMS_AP_PASSWORD
         eight characters and must not be committed in sdkconfig.
 
 config SAEMS_POWER_SAVE_ENABLED
-    bool "Enable Wi-Fi modem power saving"
+    bool "Enable Wi-Fi modem saving in Direct mode"
     default y
     help
-        Enables modem power saving while preserving MQTT, BLE and AP sessions.
-        Light/deep sleep remain guarded by Power Manager and are not entered
-        while a direct connection or pending synchronization is active.
+        Legacy/runtime switch for Direct mode only. Light and Battery are
+        selected by the power_mode value stored in NVS.
+
+choice SAEMS_POWER_MODE
+    prompt "Default power mode for unprovisioned NVS"
+    default SAEMS_POWER_MODE_MODEM_SAVE
+    help
+        All three modes are compiled into one firmware. This choice is used only
+        until power_mode is saved in NVS. BLE or Wi-Fi AP can change the mode at
+        runtime and firmware applies it at the next sampling boundary.
+
+config SAEMS_POWER_MODE_ACTIVE
+    bool "Always active"
+
+config SAEMS_POWER_MODE_MODEM_SAVE
+    bool "Direct mode: Wi-Fi modem power save"
+
+config SAEMS_POWER_MODE_LIGHT_SLEEP
+    bool "Automatic Light Sleep"
+
+config SAEMS_POWER_MODE_DEEP_SLEEP
+    bool "Battery mode: timer Deep Sleep"
+
+endchoice
+
+config SAEMS_DEEP_SLEEP_SYNC_WINDOW_SECONDS
+    int "Maximum MQTT synchronization window before Deep Sleep"
+    range 1 120
+    default 15
+    help
+        Maximum awake time used to connect and drain queued telemetry. When the
+        deadline expires, pending records remain in NVS and the device sleeps;
+        the next wake cycle retries them instead of staying awake indefinitely.
+
+config SAEMS_BATTERY_MAINTENANCE_WINDOW_SECONDS
+    int "Minimum BLE/AP maintenance window in Battery mode"
+    range 1 60
+    default 10
+    help
+        Minimum awake time after each sample. BLE/AP remain available during
+        this window so the mobile app can change power_mode without reflashing.
+        A connected BLE session postpones Deep Sleep until it disconnects.
 
 choice SAEMS_BH1750_I2C_ADDRESS
     prompt "BH1750 I2C address"
@@ -90,8 +129,16 @@ config SAEMS_SOIL_SENSOR_ENABLED
     bool "Enable LM393 soil moisture sensor"
     default n
     help
-        Leave disabled until the probe is attached and dry/wet ADC values
-        have been measured. While disabled, soil_moisture_pct is JSON null.
+        Enable only after attaching the probe. Percentage output also needs
+        measured endpoints and soil_calibrated=true in the device config.
+
+config SAEMS_SOIL_RAW_READOUT_ENABLED
+    bool "Read LM393 raw ADC for calibration even when soil is disabled in NVS"
+    default n
+    help
+        Use only with the probe attached and VCC=3.3V. Reads AO/DO without
+        inventing a moisture percentage. Useful when an older NVS config
+        still has soil_enabled=false. Keep disabled with an open ADC input.
 
 config SAEMS_SOIL_DRY_RAW
     int "LM393 dry ADC value"

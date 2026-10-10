@@ -101,13 +101,23 @@ nhận bản tin; firmware không tự tạo một thời gian UTC giả.
 ## LM393 khi chưa có que cắm đất
 
 `Enable LM393 soil moisture sensor` mặc định tắt. Không bật khi AO đang hở vì ADC
-sẽ trôi và tạo số liệu giả. Sau khi có que đo:
+sẽ trôi và tạo số liệu giả. Khi đã gắn que nhưng chưa hiệu chuẩn, bật raw readout;
+firmware gửi `soil_raw`, `soil_digital`, `soil_moisture_pct=null` và trạng thái
+`uncalibrated`. Chỉ xuất phần trăm sau khi lưu `soil_calibrated=true` cùng hai
+mốc đo thực tế. Key NVS cũ chưa có cờ này được coi là chưa hiệu chuẩn.
+
+Hướng dẫn build/flash, đo hai mốc, lưu NVS không cần reflash và demo ba lớp:
+[LM393 build/calibration/demo](../../docs/lm393-build-calibration-demo.md).
+
+Sau khi có que đo:
 
 1. Gắn que vào board LM393, cấp VCC 3V3 và để firmware vẫn chưa publish phần trăm.
 2. Đọc log ADC khi que ở trạng thái khô cần quy ước; ghi lại `raw` làm `dry`.
 3. Đọc lại trong đất/nước ở mức ướt cần quy ước; ghi lại `raw` làm `wet`.
-4. Mở `SAEMS firmware`, bật LM393 và nhập đúng hai giá trị dry/wet.
-5. Flash lại, kiểm tra log `LM393 raw=... pct=... DO=...` và so sánh thực tế.
+4. Dùng helper `scripts/windows/soil_calibration.ps1` qua AP để lưu cả hai mốc,
+   `soil_enabled=true`, `soil_calibrated=true`; helper kiểm tra readback.
+5. Nhấn EN/reset, kiểm tra log `LM393 raw=... pct=... DO=...` và so sánh thực tế.
+   Bản raw-readout đã flash không cần build/flash lại chỉ để đổi mốc.
 
 Hai mặc định 3000/1200 chỉ là giá trị giữ chỗ trong cấu hình, không phải số hiệu
 chuẩn cho que đo của bạn. Pin DO chỉ phản ánh ngưỡng đặt bằng biến trở trên module;
@@ -146,9 +156,16 @@ telemetry read/notify, config read/write và command write. Telemetry dài đư�
 frame bốn byte header. AP dùng WPA2 và phục vụ API local tại
 `http://192.168.4.1`; hợp đồng chi tiết nằm trong `docs/direct-connection-protocol.md`.
 
-Power Manager hiện chọn modem power-save khi Wi-Fi STA hoạt động. Light/deep sleep
-đã có code và guard không sleep khi direct connection đang hoạt động hoặc còn dữ
-liệu chờ sync, nhưng chưa bật mặc định trước khi đo dòng và test wake-up trên bo.
+Power Manager tích hợp cả ba mode trong một firmware. `power_mode` (`direct`,
+`light`, `battery`) được app ghi qua BLE/AP, lưu trong NVS và áp dụng ở ranh giới
+chu kỳ lấy mẫu mà không cần flash lại. `Direct` dùng Wi-Fi modem power-save và giữ
+BLE/AP; `Light` bật dynamic frequency scaling, automatic Light Sleep và tickless
+idle; `Battery` giữ BLE/AP trong cửa sổ thức ngắn rồi dùng timer Deep Sleep giữa
+các chu kỳ. Battery luôn lưu telemetry vào FIFO NVS trước, dành tối đa 15 giây để
+sync, sau đó vẫn ngủ nếu server mất mạng. `boot_id` và sequence được giữ trong RTC
+memory qua Deep Sleep; cold boot cấp dải sequence mới từ NVS. Tham số
+`run_device.ps1 -PowerProfile` chỉ chọn mode mặc định khi NVS chưa có cấu hình.
+Xem [hướng dẫn nghiệm thu Power Manager](../../docs/power-management-demo.md).
 
 ## Điều khiển relay và xử lý mất mạng
 
@@ -188,7 +205,8 @@ overflowed the default 4 KiB host stack during real-phone testing.
 The 32-record offline FIFO preserves queued records on overflow and rejects the
 new sample (logged), rather than evicting a pending head before its PUBACK.
 See [hardware acceptance](../../docs/new-firmware-device-server-app-acceptance.md)
-for actual BLE/AP/4G results and full-flash backup. Cold power-cycle, durable
-offline recovery, relay and sleep/wake remain pending. REST local currently
+for actual BLE/AP/4G results and full-flash backup. Power profiles build
+successfully; cold power-cycle, relay, sleep/wake and current measurement remain
+pending on hardware. REST local currently
 also listens through STA without owner authentication; restrict AP scope/add
 authentication before shared-LAN use. BLE Just Works is not owner/MITM auth.
