@@ -11,9 +11,12 @@ mobile/saems_app/       Ứng dụng Flutter cho server, BLE và Wi-Fi AP
 docs/                   API, giao thức kết nối trực tiếp và tiến độ kiểm thử
 ```
 
-Firmware chính nằm tại `firmware/esp32s3`. Project ESP-IDF mẫu ở root được giữ
-nguyên để tránh xóa hoặc di chuyển phần mã chung của repository trong cùng nhánh;
-không dùng project mẫu đó để build firmware SAEMS.
+Sau khi merge nhánh nhóm, repository có hai project ESP-IDF. `components/` và
+`main/` ở root là firmware baseline từ `feature/Hien/firmware`, được giữ
+nguyên để không làm mất mã của thành viên khác. Firmware tích hợp đã dùng để demo
+Device–Server–App nằm tại `firmware/esp32s3/`; toàn bộ script Windows trong
+`scripts/windows/` build và flash project này. Không chạy `idf.py build` ở
+root khi mục tiêu là demo SAEMS tích hợp.
 
 ## Tài liệu chính
 

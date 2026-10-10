@@ -16,6 +16,18 @@ Mục tiêu là đối chiếu yêu cầu đề tài với phần đã hiện th
 phần còn thiếu và quy trình demo thống nhất. Credentials, token, mật khẩu và dữ
 liệu riêng tư không nằm trong báo cáo hoặc Git.
 
+### Cấu trúc sau khi hợp nhất nhánh
+
+- `components/` và `main/` ở root là firmware baseline của
+  `feature/Hien/firmware`; mã này được giữ nguyên để bảo toàn phần việc nhóm.
+- `firmware/esp32s3/` là firmware modular đã dùng cho demo tích hợp hiện tại.
+- `services/mini-server/` là source Raspberry Pi.
+- `mobile/saems_app/` là source Flutter Android.
+- `scripts/windows/` là điểm vào thống nhất để build và demo.
+
+Các lệnh `run_device.cmd/run_device.ps1` trỏ vào `firmware/esp32s3/`, không
+build project ESP-IDF ở root.
+
 ## 2. Kiến trúc tổng thể
 
 ```text
