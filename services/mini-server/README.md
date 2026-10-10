@@ -1,62 +1,114 @@
-# SAEMS mini server
+# SAEMS mini-server
 
-## Bản đang chạy trên Pi: HTTPS Internet
+Mini-server nhận telemetry MQTT từ ESP32-S3, kiểm tra schema, lưu SQLite và cung
+cấp REST API/dashboard cho ứng dụng. Bản triển khai hiện tại chạy trên Raspberry
+Pi 4 tại `/home/admin/saems-mini-server`.
 
-API/dashboard: `https://admin.tailb1f0ba.ts.net`; MQTT TLS:
-`mqtts://admin.tailb1f0ba.ts.net:8443`.
-
-Bản mới chạy tại `/home/admin/saems-mini-server` với bốn service `saems-mqtt`,
-`saems-ingestor`, `saems-api`, `saems-legacy-ingestor`. Broker mới chỉ bind loopback `1884`, API bind
-loopback `3000`; Tailscale Funnel cấp TLS/public routing. Bản cũ và broker LAN
-`1883` không bị thay thế. Credentials mới nằm trong `device-access.json` riêng
-tư, không được commit.
-
-App/API dùng Bearer token; dashboard dùng username `saems`, password là API
-token. `/health` công khai; các route dữ liệu, dashboard và docs có xác thực.
-`API_PUBLIC_MODE=true` yêu cầu token ít nhất 32 ký tự. CORS mặc định không mở
-wildcard; `CORS_ORIGINS` chỉ thêm origin web thực sự cần thiết.
-
-Xem [runbook Internet/provisioning](../../docs/internet-and-provisioning.md)
-cho cài app, cấu hình ESP32, bằng chứng kiểm thử, bảo trì và tắt public endpoint.
-Không chạy thêm API/ingestor thủ công trùng với các service đang chạy.
-
-Bộ nhận tương thích `legacy_mqtt_ingestor.py` chỉ đọc
-`smartfarm/farm-01/telemetry` từ broker LAN cũ, giữ nguyên payload và dùng chung
-validator/database/dedup. Không gửi lệnh và không thay firmware. Mật khẩu cũ
-được cấu hình riêng trong `.legacy.env` (600, Git ignored). Ba unit test đạt.
-Phiên sau đã flash firmware mới: MQTT TLS từ ESP32 tới `saems-ingestor` trực tiếp,
-không phụ thuộc bridge cũ. Samsung nhận dữ liệu DHT20/BH1750 qua HTTPS bằng 4G;
-BLE/AP read/config đã kiểm thử trên A24. Bridge vẫn được giữ để tương thích.
-Chi tiết: [nghiệm thu firmware mới](../../docs/new-firmware-device-server-app-acceptance.md).
-SSH qua Tailscale hiện bị policy từ chối; HTTPS không đồng nghĩa có quyền SSH.
-
-Các hướng dẫn LAN bên dưới là phương án triển khai khác, không phải lệnh dùng
-để thay thế broker đang chạy trên Pi. `run_api.sh` mặc định bind loopback; chỉ
-đặt `API_BIND_HOST=0.0.0.0` khi chủ động cho phép LAN và đã cấu hình xác thực.
-
-Module nhận telemetry MQTT từ ESP32-S3, lưu vào SQLite và cung cấp REST API cùng
-dashboard web. Dashboard không dùng CDN nên chạy được hoàn toàn trong mạng LAN.
-
-## Luồng dữ liệu
+## Kiến trúc đang chạy
 
 ```text
-ESP32-S3 -> Mosquitto -> mqtt_ingestor.py -> SQLite -> FastAPI -> Dashboard
+ESP32-S3
+  └─ MQTT TLS :8443
+      └─ Mosquitto (saems-mqtt, origin loopback :1884)
+          └─ mqtt_ingestor.py (saems-ingestor)
+              └─ SQLite data/telemetry.db
+                  └─ FastAPI api.py (saems-api, loopback :3000)
+                      └─ Tailscale Funnel HTTPS
+                          ├─ Android app
+                          └─ Web dashboard
 ```
 
-Hai tài khoản MQTT có quyền tách biệt:
+Endpoint công khai hiện dùng:
 
-- `saems_esp32`: thiết bị chỉ được publish telemetry của `farm-01`.
-- `saems_server`: ingestor được subscribe telemetry của các thiết bị.
+- HTTPS API/dashboard: `https://admin.tailb1f0ba.ts.net`
+- MQTT TLS: `mqtts://admin.tailb1f0ba.ts.net:8443`
 
-## Cài đặt
+Bốn service là `saems-mqtt`, `saems-ingestor`, `saems-api` và
+`saems-legacy-ingestor`. Service legacy chỉ đọc topic firmware cũ để tương
+thích; firmware mới publish trực tiếp vào broker TLS SAEMS.
 
-Trên Raspberry Pi:
+## Thành phần mã nguồn
+
+| Thành phần | Vai trò |
+| --- | --- |
+| `mqtt_ingestor.py` | Subscribe telemetry, validate, deduplicate và insert SQLite |
+| `legacy_mqtt_ingestor.py` | Chuyển envelope topic cũ sang schema chung |
+| `api.py` | API thiết bị, telemetry, command và dashboard |
+| `mqtt_security.py` | TLS/certificate cho MQTT client |
+| `dashboard/index.html` | Dashboard không phụ thuộc CDN |
+| `scripts/` | Khởi chạy, theo dõi và health check trên Pi |
+| `systemd/` | Mẫu service tự khởi động |
+| `config/` | Mẫu Mosquitto listener và ACL |
+
+SQLite khử trùng theo `device_id + boot_id + seq`. Bản tin QoS 1 được gửi lại
+không tạo dòng trùng.
+
+## Xác thực và credentials
+
+- `/health` công khai để kiểm tra trạng thái.
+- API dữ liệu dùng `Authorization: Bearer <token>`.
+- Dashboard dùng username `saems`; password là API token.
+- MQTT dùng tài khoản/ACL riêng cho ESP32 và server.
+- Credentials cục bộ nằm trong `.local/device-access.json` hoặc file `.env`
+  trên Pi; không được ghi vào README, source hoặc commit Git.
+
+HTTPS cho app/API không đồng nghĩa với quyền SSH vào Pi. `Logs`, `Db` và
+`Services` trong script Windows vẫn cần đường SSH hợp lệ tới Pi.
+
+## Demo server từ thư mục script chung
+
+Chạy tại thư mục gốc repository:
+
+```powershell
+Set-Location 'C:\Users\Tien An\esp\SAEMS_esp32_test\merge_github'
+
+# Kiểm tra health và bản telemetry mới nhất qua Internet
+.\scripts\windows\run_server.ps1 -Action Check
+
+# Theo dõi bản ghi mới từ API/SQLite theo thời gian
+.\scripts\windows\run_server.ps1 -Action Watch
+
+# Các lệnh dưới cần SSH tới Pi
+.\scripts\windows\run_server.ps1 -Action Services
+.\scripts\windows\run_server.ps1 -Action Logs
+.\scripts\windows\run_server.ps1 -Action Db
+```
+
+`Check` và `Watch` dùng HTTPS nên laptop không cần chung Wi-Fi với Pi. Mặc
+định `Logs/Db/Services` dùng `admin@192.168.1.4`; có thể truyền `-PiHost`
+khi đã có địa chỉ Tailscale/SSH hợp lệ.
+
+Luồng demo ba lớp và các terminal cần mở nằm tại
+[scripts/windows/RUN-DEMO.md](../../scripts/windows/RUN-DEMO.md).
+
+## API chính
+
+| Method | Endpoint | Mục đích |
+| --- | --- | --- |
+| GET | `/health` | Health check |
+| GET | `/api/v1/devices` | Danh sách thiết bị |
+| GET | `/api/v1/devices/{id}/status` | Trạng thái thiết bị |
+| GET | `/api/v1/devices/{id}/telemetry/latest` | Mẫu mới nhất |
+| GET | `/api/v1/devices/{id}/telemetry?limit=50` | Lịch sử |
+| POST | `/api/v1/devices/{id}/commands/pump` | Xếp lệnh bơm vào MQTT |
+| GET | `/docs` | OpenAPI UI có xác thực |
+
+Lệnh bơm mẫu:
+
+```json
+{"state":"on","duration_s":30}
+```
+
+API trả `queued` chỉ có nghĩa broker đã nhận lệnh. Trạng thái relay phải được
+xác nhận bằng telemetry tiếp theo; firmware vẫn chịu trách nhiệm auto-off.
+
+## Cài đặt hoặc phục hồi trên Raspberry Pi
 
 ```bash
 sudo apt update
 sudo apt install -y mosquitto mosquitto-clients sqlite3 python3 python3-venv
 
-cd services/mini-server
+cd /home/admin/saems-mini-server
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements.txt
@@ -64,136 +116,40 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Sửa `.env` và nhập mật khẩu của tài khoản `saems_server`. Giá trị phải theo
-cú pháp biến môi trường shell vì các script dùng `source .env`.
-
-## Cấu hình Mosquitto
-
-Tạo hai tài khoản. Chỉ dùng `-c` ở lệnh đầu vì tùy chọn này tạo mới và ghi đè
-password file:
-
-```bash
-sudo mosquitto_passwd -c /etc/mosquitto/passwd saems_esp32
-sudo mosquitto_passwd /etc/mosquitto/passwd saems_server
-sudo install -m 640 -o root -g mosquitto config/acl.example /etc/mosquitto/acl
-sudo install -m 644 config/mosquitto.conf.example /etc/mosquitto/conf.d/saems.conf
-sudo systemctl enable --now mosquitto
-sudo systemctl restart mosquitto
-```
-
-Nếu Mosquitto báo cấu hình trùng `listener`, kiểm tra các file khác trong
-`/etc/mosquitto/conf.d/` trước khi khởi động lại.
-
-## Chạy thủ công
-
-Terminal 1:
+Sau khi điền `.env`, chạy thủ công chỉ khi systemd đang dừng để tránh hai
+ingestor/API cùng dùng một database hoặc port:
 
 ```bash
 ./scripts/run_ingestor.sh
-```
-
-Terminal 2:
-
-```bash
 ./scripts/run_api.sh
-```
-
-Terminal 3, nếu cần quan sát MQTT:
-
-```bash
 ./scripts/monitor_mqtt.sh
-```
-
-Mở dashboard tại `http://<IP_RASPBERRY_PI>:3000/`.
-
-## API
-
-- `GET /health`
-- `GET /api/v1/devices`
-- `GET /api/v1/devices/farm-01/status`
-- `GET /api/v1/devices/farm-01/telemetry/latest`
-- `GET /api/v1/devices/farm-01/telemetry?limit=50`
-- `POST /api/v1/devices/farm-01/commands/pump`
-- `GET /docs`
-
-`light_lux` is the canonical field name from the ESP32 payload. The API also
-keeps `light_value` as a compatibility alias for the existing dashboard and
-older clients. The app should call `GET /api/v1/devices` at startup to obtain
-the device list, then use the selected `device_id` with the status or telemetry
-endpoint.
-
-Điều khiển bơm dùng JSON:
-
-```json
-{"state":"on","duration_s":30}
-```
-
-hoặc:
-
-```json
-{"state":"off","duration_s":0}
-```
-
-API chỉ xác nhận broker đã nhận lệnh (`status: queued`); trạng thái phần cứng
-được xác nhận ở telemetry kế tiếp của ESP32. Firmware luôn tự tắt bơm sau thời
-gian an toàn cấu hình trong menuconfig.
-
-Kiểm tra toàn bộ nhanh bằng:
-
-```bash
 ./scripts/check_system.sh
 ```
 
-## Kiểm thử mất mạng và reconnect
-
-1. Chạy ingestor, API và theo dõi log ESP32. Khi MQTT bị ngắt, ESP32 ghi
-   `MQTT offline; buffered telemetry` và vẫn đọc cảm biến.
-2. Khôi phục broker hoặc Wi-Fi. ESP32 phải ghi `Flushed offline telemetry` rồi
-   tiếp tục publish; ingestor phải ghi `Telemetry saved`.
-3. Kiểm tra SQLite không có bản ghi trùng bằng khóa `device_id + boot_id + seq`:
+Kiểm tra service đang triển khai:
 
 ```bash
-sqlite3 data/telemetry.db \
-  "SELECT device_id, boot_id, seq, COUNT(*) FROM telemetry GROUP BY device_id, boot_id, seq HAVING COUNT(*) > 1;"
-```
-
-Firmware modular mới giữ tối đa 32 mẫu trong FIFO NVS, bảo toàn mẫu chờ PUBACK
-và từ chối mẫu mới khi đầy. Đã quan sát gửi mẫu startup chờ đồng bộ thời gian;
-khả năng gửi bù đầy đủ sau mất mạng/mất điện vẫn chưa nghiệm thu trên board.
-Thông số này áp dụng cho firmware mới đã flash, không phải firmware legacy.
-
-## Chạy bằng systemd
-
-Các file trong `systemd/` dùng đường dẫn bản triển khai hiện tại:
-
-```text
-/home/admin/saems-mini-server
-```
-
-Nếu vị trí hoặc user khác, sửa đồng thời `User`, `WorkingDirectory`,
-`EnvironmentFile` và `ExecStart`. Sau đó:
-
-```bash
-sudo install -m 644 systemd/saems-ingestor.service.example /etc/systemd/system/saems-ingestor.service
-sudo install -m 644 systemd/saems-api.service.example /etc/systemd/system/saems-api.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now saems-ingestor saems-api
-```
-
-Kiểm tra sau khi cài:
-
-```bash
-systemctl status saems-ingestor saems-api --no-pager
-journalctl -u saems-ingestor -f
+systemctl is-active saems-mqtt saems-ingestor saems-legacy-ingestor saems-api tailscaled
+journalctl -u saems-mqtt -u saems-ingestor -u saems-api -f -o short-iso
 curl http://127.0.0.1:3000/health
 ```
 
-## Dữ liệu và bảo mật
+## Kiểm thử source server
 
-Database được tạo tại `data/telemetry.db` và không được commit. ESP32 cấp phát
-sequence theo block trong NVS nên sequence không quay lại `1` sau reboot. Schema
-vẫn dùng `device_id + boot_id + seq` để khử bản tin QoS 1 trùng. Ingestor tự
-chuyển database cũ từ index `device_id + seq`.
+Từ `services/mini-server`:
 
-Không commit `.env`, database, `.venv` hoặc log. MQTT cổng 1883 chỉ phù hợp demo
-trong LAN tin cậy; triển khai bên ngoài LAN cần TLS và kiểm soát truy cập mạng.
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+python3 -m py_compile api.py mqtt_ingestor.py legacy_mqtt_ingestor.py mqtt_security.py
+```
+
+## Giới hạn vận hành
+
+- Không commit `.env`, database, MQTT password file, `.venv` hoặc log.
+- Broker TCP 1883 cũ chỉ dành cho tương thích LAN; thiết bị mới dùng TLS 8443.
+- CORS không mở wildcard trong public mode.
+- Tailscale SSH hiện phụ thuộc ACL riêng; HTTPS vẫn hoạt động khi SSH bị từ chối.
+- Trước khi thay service/config trên Pi phải sao lưu database và kiểm tra đường
+  dẫn `/home/admin/saems-mini-server`.
+
+Báo cáo hiện trạng: [IMPLEMENTATION-REPORT.md](../../docs/IMPLEMENTATION-REPORT.md).

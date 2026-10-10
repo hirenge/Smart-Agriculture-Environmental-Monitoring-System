@@ -15,6 +15,23 @@ Firmware chính nằm tại `firmware/esp32s3`. Project ESP-IDF mẫu ở root �
 nguyên để tránh xóa hoặc di chuyển phần mã chung của repository trong cùng nhánh;
 không dùng project mẫu đó để build firmware SAEMS.
 
+## Tài liệu chính
+
+- [Báo cáo hiện thực Device – Server – App](docs/IMPLEMENTATION-REPORT.md)
+- [Hướng dẫn demo bằng script](scripts/windows/RUN-DEMO.md)
+- [Firmware ESP32-S3](firmware/esp32s3/README.md)
+- [Mini-server Raspberry Pi](services/mini-server/README.md)
+- [Mobile app Flutter](mobile/saems_app/README.md)
+
+Tất cả script Windows được gọi từ thư mục gốc repository:
+
+```powershell
+Set-Location 'C:\Users\Tien An\esp\SAEMS_esp32_test\merge_github'
+.\scripts\windows\run_device.cmd -Action Read -Seconds 60
+.\scripts\windows\run_server.ps1 -Action Watch
+.\scripts\windows\run_app.ps1 -Action Run -Target Pixel6
+```
+
 ## Trạng thái
 
 - Firmware cảm biến thật, NVS offline queue, MQTT sync, BLE GATT, Wi-Fi AP REST,
@@ -26,7 +43,7 @@ không dùng project mẫu đó để build firmware SAEMS.
   tại `mqtts://admin.tailb1f0ba.ts.net:8443`, có token API và ACL MQTT; đã kiểm tra
   qua IP Funnel công khai. Dữ liệu/source server cũ vẫn được giữ nguyên.
 - App đã kết nối BLE native, có provisioning BLE/AP và token lưu bảo mật;
-  APK build đạt, 19 test đạt; bản cuối đã cài trên Samsung A24 và Pixel_6.
+  APK build đạt, 21 test đạt; bản cuối đã cài trên Samsung A24 và Pixel_6.
 - Firmware mới đã flash COM3, đọc DHT20/BH1750 thật và gửi MQTT TLS trực tiếp
   lên Pi; Samsung nhận dữ liệu HTTPS bằng 4G. BLE read/notify/config và Wi-Fi
   AP read/config đã kiểm tra trên A24 thật. Bộ nhận firmware cũ vẫn được giữ.
@@ -34,8 +51,8 @@ không dùng project mẫu đó để build firmware SAEMS.
   ESP32 đổi Wi-Fi. REST local đang truy cập được cả qua STA; cần giới hạn AP
   và bổ sung owner authentication cho BLE/AP trước khi dùng trên LAN chung.
 - Quản trị SSH khác mạng chưa hoàn tất: Tailscale SSH đang bị policy từ chối.
-- LM393 mặc định disabled khi chưa gắn que; bản đọc raw dùng cho hiệu chuẩn
-  đã build, nhưng chưa flash trong phiên 2026-10-09 vì USB bị ngắt kết nối.
+- LM393 đã gắn que, đọc ADC thật và hiệu chuẩn bằng mốc `dry=4095`, `wet=2080`;
+  firmware đã trả phần trăm và trạng thái soil `ok`.
 
 Đã bổ sung chế độ đọc ADC thô LM393 khi gắn que, guard hiệu chuẩn và helper lưu
 hai mốc vào NVS. Hướng dẫn chi tiết:

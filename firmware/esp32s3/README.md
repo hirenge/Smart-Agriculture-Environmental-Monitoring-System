@@ -1,212 +1,157 @@
 # SAEMS ESP32-S3 firmware
 
-Firmware đọc cảm biến vật lý, kết nối Wi-Fi/MQTT và publish telemetry theo chu kỳ.
-Project không chứa `hello_world_main.c`; `main/CMakeLists.txt` chỉ biên dịch firmware
-SAEMS và các component cảm biến bên dưới.
+Firmware này là chương trình chính cho thiết bị SAEMS, được viết bằng ESP-IDF
+6.0.3. Nó đọc cảm biến thật, lưu dữ liệu khi mất mạng, đồng bộ MQTT khi mạng trở
+lại, cung cấp BLE/Wi-Fi AP cho ứng dụng và quản lý ba chế độ năng lượng trong
+cùng một binary. Không build project `hello_world` ở thư mục gốc repository.
 
-## Sơ đồ chân đã chuẩn hóa
+## Phần cứng và sơ đồ chân
 
 | Thiết bị | Chân thiết bị | ESP32-S3 | Chức năng |
 | --- | --- | --- | --- |
 | DHT20 | SDA | GPIO17 | I²C SDA |
 | DHT20 | SCL | GPIO18 | I²C SCL |
-| DHT20 | VCC | 3V3 | Nguồn và mức logic I²C 3,3 V |
-| DHT20 | GND | GND | Mass chung |
-| BH1750 | SDA | GPIO17 | I²C SDA, dùng chung bus với DHT20 |
-| BH1750 | SCL | GPIO18 | I²C SCL, dùng chung bus với DHT20 |
-| BH1750 | VCC | 3V3 | Nguồn an toàn mặc định |
-| BH1750 | GND | GND | Mass chung |
-| LM393 đất | AO | GPIO4 | ADC1_CH3, giá trị độ ẩm tương đối |
-| LM393 đất | DO | GPIO5 | Mức ngưỡng từ biến trở trên module |
-| LM393 đất | VCC | 3V3 | Giữ AO/DO không vượt mức ESP32-S3 |
-| LM393 đất | GND | GND | Mass chung |
-| Relay CH1 | IN1 | GPIO10 | Điều khiển bơm, khởi động ở OFF |
-| Relay CH2 | IN2 | GPIO11 | Kênh dự phòng, khởi động ở OFF |
-| Relay | DC+ | 5Vin | Nguồn module relay 5 V |
-| Relay | DC- | GND | Mass chung với ESP32-S3 |
+| DHT20 | VCC/GND | 3V3/GND | Nguồn và mass |
+| BH1750 | SDA | GPIO17 | I²C SDA dùng chung |
+| BH1750 | SCL | GPIO18 | I²C SCL dùng chung |
+| BH1750 | VCC/GND | 3V3/GND | Nguồn và mass |
+| LM393 | AO | GPIO4 | ADC1_CH3 |
+| LM393 | DO | GPIO5 | Ngưỡng khô/ướt của module |
+| LM393 | VCC/GND | 3V3/GND | Nguồn và mass |
+| Relay CH1 | IN1 | GPIO10 | Điều khiển bơm |
+| Relay CH2 | IN2 | GPIO11 | Kênh dự phòng |
+| Relay | DC+/DC- | 5Vin/GND chung | Nguồn cuộn relay |
 
-BH1750 là cảm biến số I²C, vì vậy SDA/SCL không phải chân ADC hoặc chân nhận
-biết sáng/tối. GPIO4 mới là chân ADC1_CH3 dùng cho AO của LM393.
+BH1750 là cảm biến I²C, không phải ADC. Không đưa mức 5 V vào GPIO, SDA hoặc SCL
+của ESP32-S3. Khi chưa nghiệm thu relay, phải ngắt tải bơm trước khi flash/reset.
 
-> Không kéo SDA/SCL hoặc bất kỳ GPIO nào của ESP32-S3 lên 5 V. DHT20 hỗ trợ
-> nguồn rộng nhưng datasheet yêu cầu điện áp host và cảm biến tương thích; IC
-> BH1750 chỉ làm việc ở VCC 2,4–3,6 V. Chỉ dùng 5 V cho một breakout BH1750 khi
-> nhà sản xuất module xác nhận có bộ ổn áp và chuyển mức I²C. Cách đấu mặc định
-> ở đây là cấp cả DHT20 và BH1750 từ 3V3.
-
-Module relay SRD-05VDC-SL-C cần nguồn cuộn 5 V. Phải kiểm tra board relay thực tế
-có nhận logic 3,3 V và kích mức thấp hay không. Firmware mặc định active-low nhưng
-có thể đổi trong `menuconfig`. Không đấu tải điện lưới nếu chưa có cách điện, cầu
-chì, vỏ bảo vệ và người có chuyên môn.
-
-## Kiến trúc manager
+## Kiến trúc firmware
 
 ```text
-components/
-├── application_manager/ # State machine và điều phối toàn hệ thống
-├── sensor_manager/      # DHT20, BH1750 và LM393
-├── data_manager/        # Telemetry JSON schema v1
-├── config_manager/      # Cấu hình vận hành và credentials trong NVS
-├── network_manager/     # Wi-Fi STA, AP hoặc AP+STA
-├── mqtt_manager/        # Telemetry/command MQTT QoS 1
-├── storage_manager/     # FIFO NVS bền qua reboot, tối đa 32 bản ghi
-├── sync_manager/        # Gửi bù, chỉ xóa sau MQTT publish ACK
-├── direct_connection/   # NimBLE GATT và REST server trên Wi-Fi AP
-├── power_manager/       # Active, modem-save và guard sleep
-└── relay/               # GPIO10/GPIO11, boot OFF và auto-off
-main/
-└── main.c                # Khởi tạo NVS và Application Manager
+main/main.c
+  └─ application_manager      State machine toàn hệ thống
+      ├─ config_manager       Cấu hình và credentials trong NVS
+      ├─ sensor_manager       DHT20, BH1750, LM393
+      ├─ data_manager         Telemetry JSON schema v1
+      ├─ storage_manager      FIFO NVS tối đa 32 bản ghi
+      ├─ network_manager      Wi-Fi STA, AP và reconnect
+      ├─ mqtt_manager         MQTT QoS 1 và command
+      ├─ sync_manager         Gửi bù, xóa sau PUBACK
+      ├─ direct_connection    BLE GATT và REST trên Wi-Fi AP
+      ├─ power_manager        Direct, Light Sleep, Battery/Deep Sleep
+      └─ relay                Boot OFF, giới hạn thời gian bật
 ```
 
-Luồng mỗi chu kỳ là `READ_SENSOR → PROCESS_DATA → STORE_DATA → SYNC_DATA → IDLE`.
-Telemetry luôn được lưu bền trước khi gửi MQTT. Khi chưa có Wi-Fi, firmware vẫn
-khởi động cảm biến, lưu offline và quảng bá BLE; AP cũng có thể chạy độc lập.
+Chu kỳ chính:
 
-Nếu một cảm biến chưa sẵn sàng hoặc đọc lỗi, firmware vẫn gửi bản tin nhưng trường
-tương ứng là `null`; không thay bằng dữ liệu giả. `battery_pct` cũng là `null` vì
-phần cứng hiện chưa có mạch đo pin.
-
-Ví dụ khi chưa gắn que đo đất:
-
-```json
-{
-  "schema_version": 1,
-  "device_id": "farm-01",
-  "boot_id": "1a2b3c4d",
-  "seq": 1,
-  "timestamp": null,
-  "timestamp_source": "unsynced",
-  "uptime_ms": 15000,
-  "data_mode": "real",
-  "sensor_health": "degraded",
-  "sensor_status": {
-    "dht20": "ok",
-    "bh1750": "ok",
-    "soil": "unavailable"
-  },
-  "temperature_c": 28.4,
-  "humidity_pct": 72.1,
-  "soil_moisture_pct": null,
-  "light_lux": 135.8,
-  "battery_pct": null,
-  "pump_state": "off"
-}
+```text
+READ_SENSOR → PROCESS_DATA → STORE_DATA → SYNC_DATA → IDLE/SLEEP
 ```
 
-`sensor_health` là trạng thái tổng hợp để server/app cũ vẫn đọc được; object
-`sensor_status` cho biết chính xác module nào lỗi hoặc chưa được bật. Khi chưa
-đồng bộ được thời gian Internet, `timestamp` là `null` và server dùng thời gian
-nhận bản tin; firmware không tự tạo một thời gian UTC giả.
+Telemetry được lưu trước khi publish. Nếu Wi-Fi, MQTT hoặc server mất kết nối,
+thiết bị vẫn lấy mẫu và giữ bản ghi trong FIFO NVS. Khi MQTT kết nối lại,
+`sync_manager` gửi từ bản cũ nhất và chỉ xóa sau PUBACK QoS 1. Khóa
+`device_id + boot_id + seq` giúp server loại bản tin trùng.
 
-## LM393 khi chưa có que cắm đất
+## Dữ liệu cảm biến
 
-`Enable LM393 soil moisture sensor` mặc định tắt. Không bật khi AO đang hở vì ADC
-sẽ trôi và tạo số liệu giả. Khi đã gắn que nhưng chưa hiệu chuẩn, bật raw readout;
-firmware gửi `soil_raw`, `soil_digital`, `soil_moisture_pct=null` và trạng thái
-`uncalibrated`. Chỉ xuất phần trăm sau khi lưu `soil_calibrated=true` cùng hai
-mốc đo thực tế. Key NVS cũ chưa có cờ này được coi là chưa hiệu chuẩn.
+- DHT20 trả `temperature_c` và `humidity_pct`.
+- BH1750 trả `light_lux`.
+- LM393 trả `soil_raw`, `soil_digital` và chỉ trả `soil_moisture_pct` sau khi
+  đã lưu hai mốc ADC khô/ướt thực tế.
+- Cảm biến lỗi hoặc chưa cấu hình trả `null`; firmware không tạo dữ liệu giả.
+- `battery_pct` hiện là `null` vì chưa có mạch đo pin.
+- `data_mode` của firmware thật luôn là `real`.
 
-Hướng dẫn build/flash, đo hai mốc, lưu NVS không cần reflash và demo ba lớp:
-[LM393 build/calibration/demo](../../docs/lm393-build-calibration-demo.md).
-
-Sau khi có que đo:
-
-1. Gắn que vào board LM393, cấp VCC 3V3 và để firmware vẫn chưa publish phần trăm.
-2. Đọc log ADC khi que ở trạng thái khô cần quy ước; ghi lại `raw` làm `dry`.
-3. Đọc lại trong đất/nước ở mức ướt cần quy ước; ghi lại `raw` làm `wet`.
-4. Dùng helper `scripts/windows/soil_calibration.ps1` qua AP để lưu cả hai mốc,
-   `soil_enabled=true`, `soil_calibrated=true`; helper kiểm tra readback.
-5. Nhấn EN/reset, kiểm tra log `LM393 raw=... pct=... DO=...` và so sánh thực tế.
-   Bản raw-readout đã flash không cần build/flash lại chỉ để đổi mốc.
-
-Hai mặc định 3000/1200 chỉ là giá trị giữ chỗ trong cấu hình, không phải số hiệu
-chuẩn cho que đo của bạn. Pin DO chỉ phản ánh ngưỡng đặt bằng biến trở trên module;
-phần trăm được tính từ AO sau hiệu chuẩn.
-
-## Cấu hình và build
-
-```powershell
-cd firmware/esp32s3
-idf.py set-target esp32s3
-idf.py menuconfig
-```
-
-Trong `SAEMS firmware`, nhập Wi-Fi, MQTT broker, tài khoản thiết bị, mật khẩu,
-địa chỉ BH1750 và loại kích relay. Credentials mặc định nằm trong `sdkconfig` cục
-bộ và không được commit. Thiết bị cũng nhận provisioning qua BLE hoặc `PUT
-/v1/config` của AP, lưu vào NVS và áp dụng đầy đủ sau reboot; API đọc cấu hình
-không trả lại mật khẩu.
-
-```powershell
-idf.py fullclean
-idf.py build
-idf.py -p COM3 flash monitor
-```
-
-Khi chưa gắn que đất, giữ LM393 disabled. Build đã được xác nhận bằng ESP-IDF
-6.0.3 với binary `saems_esp32s3.bin`; binary cuối `0x141310`, OTA slot 3 MiB
-còn khoảng 58%. Đã flash COM3 và kiểm thử DHT20/BH1750, MQTT TLS, BLE/AP trên A24.
-Kiểm thử trên bo mạch cần có log `DHT20 ready`, `BH1750 ready`,
-`MQTT connected` và `Published ... payload=...`; không được có `Hello world!`.
+Mốc LM393 đang dùng trong đợt demo là `dry=4095`, `wet=2080`. Đây là mốc của
+que/mẫu đất đã đo, không phải hằng số áp dụng cho mọi cảm biến hoặc loại đất.
 
 ## BLE, Wi-Fi AP và Power Manager
 
-BLE dùng service `a0f00001-6c7a-4d70-9e3b-9a2c00000001` với device info,
-telemetry read/notify, config read/write và command write. Telemetry dài được chia
-frame bốn byte header. AP dùng WPA2 và phục vụ API local tại
-`http://192.168.4.1`; hợp đồng chi tiết nằm trong `docs/direct-connection-protocol.md`.
+BLE quảng bá thiết bị SAEMS và cung cấp device info, telemetry read/notify,
+config read/write và command. Wi-Fi AP cung cấp REST API tại
+`http://192.168.4.1`. Hợp đồng chi tiết nằm trong
+[direct-connection-protocol.md](../../docs/direct-connection-protocol.md).
 
-Power Manager tích hợp cả ba mode trong một firmware. `power_mode` (`direct`,
-`light`, `battery`) được app ghi qua BLE/AP, lưu trong NVS và áp dụng ở ranh giới
-chu kỳ lấy mẫu mà không cần flash lại. `Direct` dùng Wi-Fi modem power-save và giữ
-BLE/AP; `Light` bật dynamic frequency scaling, automatic Light Sleep và tickless
-idle; `Battery` giữ BLE/AP trong cửa sổ thức ngắn rồi dùng timer Deep Sleep giữa
-các chu kỳ. Battery luôn lưu telemetry vào FIFO NVS trước, dành tối đa 15 giây để
-sync, sau đó vẫn ngủ nếu server mất mạng. `boot_id` và sequence được giữ trong RTC
-memory qua Deep Sleep; cold boot cấp dải sequence mới từ NVS. Tham số
-`run_device.ps1 -PowerProfile` chỉ chọn mode mặc định khi NVS chưa có cấu hình.
-Xem [hướng dẫn nghiệm thu Power Manager](../../docs/power-management-demo.md).
+Một binary chứa đủ ba mode:
 
-## Điều khiển relay và xử lý mất mạng
+| Mode | Hoạt động |
+| --- | --- |
+| `direct` | Thiết bị thức liên tục, giữ BLE/AP và Wi-Fi/MQTT |
+| `light` | Dynamic frequency scaling, tickless idle và automatic Light Sleep |
+| `battery` | Cửa sổ thức để lấy mẫu/sync/cấu hình rồi timer Deep Sleep |
 
-Server gửi command tới topic:
+Mode được đổi qua app hoặc AP, lưu NVS và áp dụng ở ranh giới chu kỳ lấy mẫu;
+không cần flash lại. Tham số `-PowerProfile` của script chỉ chọn mặc định khi
+NVS chưa có `power_mode`.
+
+## Build, flash và xem log bằng script
+
+Tất cả lệnh dưới đây chạy từ **thư mục gốc repository**, không chạy trong
+`firmware/esp32s3`:
+
+```powershell
+Set-Location 'C:\Users\Tien An\esp\SAEMS_esp32_test\merge_github'
+
+# Chỉ build
+.\scripts\windows\run_device.cmd -Action Build -PowerProfile Direct
+
+# Flash firmware hiện tại; mặc định COM3
+.\scripts\windows\run_device.cmd -Action Flash -PowerProfile Direct
+
+# Đọc log trong 60 giây hoặc mở monitor liên tục
+.\scripts\windows\run_device.cmd -Action Read -Seconds 60
+.\scripts\windows\run_device.cmd -Action Monitor
+```
+
+Wrapper `.cmd` tránh lỗi Windows mở file `.ps1` bằng Node.js. Nếu dùng
+PowerShell trực tiếp:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\windows\run_device.ps1 -Action Build
+```
+
+Build hợp lệ tạo file:
 
 ```text
-saems/farm-01/commands
+firmware/esp32s3/build-internet/saems_esp32s3.bin
 ```
 
-Payload bật bơm:
+## Hiệu chuẩn đất và đổi mode runtime
 
-```json
-{"command":"pump","state":"on","duration_s":30}
+Hai script sau yêu cầu laptop đang kết nối Wi-Fi AP của ESP32:
+
+```powershell
+.\scripts\windows\soil_calibration.ps1 -Action Read
+.\scripts\windows\soil_calibration.ps1 -Action Calibrate `
+  -DryRaw 4095 -WetRaw 2080
+
+.\scripts\windows\power_mode.ps1 -Action Set -Mode Light
+.\scripts\windows\power_mode.ps1 -Action Read
 ```
 
-Payload tắt bơm:
+Trong Battery mode, AP/BLE chỉ xuất hiện trong cửa sổ thức. Nếu cấu hình không
+kịp, reset thiết bị hoặc chuyển về Direct/Light trong lần thức kế tiếp.
 
-```json
-{"command":"pump","state":"off","duration_s":0}
-```
+## Tiêu chí demo firmware
 
-Firmware chỉ cho phép relay CH1 bật tối đa theo `Maximum pump ON duration in
-seconds` trong `menuconfig`, mặc định 60 giây, sau đó tự tắt. Khi MQTT mất kết
-nối, firmware tự reconnect và lưu tối đa 32 mẫu telemetry trong FIFO NVS để gửi
-bù kể cả sau reboot. Bản ghi chỉ bị xóa sau ACK publish QoS 1. Relay CH1/CH2 luôn
-khởi động ở OFF.
-## Internet/BLE deployment update
+- Log có `DHT20 ready`, `BH1750 ready` và relay boot ở OFF.
+- LM393 có `raw`, `pct` hợp lý sau hiệu chuẩn và `sensor_status.soil=ok`.
+- Log có Wi-Fi/MQTT connected và payload `data_mode=real`.
+- Khi ngắt mạng, số bản ghi pending tăng nhưng firmware vẫn lấy mẫu.
+- Khi mạng trở lại, pending giảm về 0 sau PUBACK và server nhận đủ dữ liệu.
+- Đổi `direct/light/battery` không cần build hoặc flash lại.
 
-MQTT TLS target: mqtts://admin.tailb1f0ba.ts.net:8443. Provision the device's MQTT
-username/password over BLE or Wi-Fi AP; they differ from the app's API token.
-Firmware uses the trusted certificate bundle, hostname validation and
-certificate-date verification. SNTP starts/restarts after STA obtains IP;
-MQTT TLS initialization waits for valid time while BLE/AP/sampling continue.
-BLE config/command writes require encryption and bond keys are stored in NVS.
-NimBLE host and AP HTTP task stacks are 8 KiB because config JSON/NVS writes
-overflowed the default 4 KiB host stack during real-phone testing.
-The 32-record offline FIFO preserves queued records on overflow and rejects the
-new sample (logged), rather than evicting a pending head before its PUBACK.
-See [hardware acceptance](../../docs/new-firmware-device-server-app-acceptance.md)
-for actual BLE/AP/4G results and full-flash backup. Power profiles build
-successfully; cold power-cycle, relay, sleep/wake and current measurement remain
-pending on hardware. REST local currently
-also listens through STA without owner authentication; restrict AP scope/add
-authentication before shared-LAN use. BLE Just Works is not owner/MITM auth.
+Luồng demo đầy đủ:
+[scripts/windows/RUN-DEMO.md](../../scripts/windows/RUN-DEMO.md). Báo cáo hiện
+trạng: [IMPLEMENTATION-REPORT.md](../../docs/IMPLEMENTATION-REPORT.md).
+
+## Giới hạn và an toàn
+
+- Chưa có phần cứng đo pin nên chưa thể báo phần trăm pin.
+- Cần đo dòng thực tế để định lượng mức tiết kiệm của Light/Deep Sleep.
+- Cần xác nhận active-low/active-high và mức logic 3,3 V của đúng module relay
+  trước khi nối tải.
+- BLE Just Works và REST AP chưa phải cơ chế xác thực chủ sở hữu mạnh; không dùng
+  provisioning trên mạng dùng chung khi chưa bổ sung bảo mật.
