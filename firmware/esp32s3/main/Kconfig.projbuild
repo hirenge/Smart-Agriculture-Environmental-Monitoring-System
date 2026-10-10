@@ -1,0 +1,155 @@
+menu "SAEMS firmware"
+
+config SAEMS_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+
+config SAEMS_WIFI_PASSWORD
+    string "Wi-Fi password"
+    default ""
+
+config SAEMS_MQTT_BROKER_URI
+    string "MQTT broker URI"
+    default "mqtt://192.168.1.4:1883"
+
+config SAEMS_MQTT_USERNAME
+    string "MQTT username"
+    default "saems_esp32"
+
+config SAEMS_MQTT_PASSWORD
+    string "MQTT password"
+    default ""
+
+config SAEMS_DEVICE_ID
+    string "Device ID"
+    default "farm-01"
+
+config SAEMS_TELEMETRY_INTERVAL_SECONDS
+    int "Telemetry interval in seconds"
+    range 1 3600
+    default 10
+
+config SAEMS_BLE_ENABLED
+    bool "Enable BLE direct connection"
+    default y
+    help
+        Exposes the SAEMS GATT service used by the mobile application for
+        telemetry notifications, configuration and pump commands.
+
+config SAEMS_AP_ENABLED
+    bool "Enable Wi-Fi Access Point and local REST API"
+    default n
+    help
+        Enables AP+STA mode and the local API at http://192.168.4.1. Keep this
+        disabled until a unique WPA2 password has been configured.
+
+config SAEMS_AP_PASSWORD
+    string "Wi-Fi AP password"
+    default ""
+    help
+        WPA2 password for the direct connection AP. It must contain at least
+        eight characters and must not be committed in sdkconfig.
+
+config SAEMS_POWER_SAVE_ENABLED
+    bool "Enable Wi-Fi modem saving in Direct mode"
+    default y
+    help
+        Legacy/runtime switch for Direct mode only. Light and Battery are
+        selected by the power_mode value stored in NVS.
+
+choice SAEMS_POWER_MODE
+    prompt "Default power mode for unprovisioned NVS"
+    default SAEMS_POWER_MODE_MODEM_SAVE
+    help
+        All three modes are compiled into one firmware. This choice is used only
+        until power_mode is saved in NVS. BLE or Wi-Fi AP can change the mode at
+        runtime and firmware applies it at the next sampling boundary.
+
+config SAEMS_POWER_MODE_ACTIVE
+    bool "Always active"
+
+config SAEMS_POWER_MODE_MODEM_SAVE
+    bool "Direct mode: Wi-Fi modem power save"
+
+config SAEMS_POWER_MODE_LIGHT_SLEEP
+    bool "Automatic Light Sleep"
+
+config SAEMS_POWER_MODE_DEEP_SLEEP
+    bool "Battery mode: timer Deep Sleep"
+
+endchoice
+
+config SAEMS_DEEP_SLEEP_SYNC_WINDOW_SECONDS
+    int "Maximum MQTT synchronization window before Deep Sleep"
+    range 1 120
+    default 15
+    help
+        Maximum awake time used to connect and drain queued telemetry. When the
+        deadline expires, pending records remain in NVS and the device sleeps;
+        the next wake cycle retries them instead of staying awake indefinitely.
+
+config SAEMS_BATTERY_MAINTENANCE_WINDOW_SECONDS
+    int "Minimum BLE/AP maintenance window in Battery mode"
+    range 1 60
+    default 10
+    help
+        Minimum awake time after each sample. BLE/AP remain available during
+        this window so the mobile app can change power_mode without reflashing.
+        A connected BLE session postpones Deep Sleep until it disconnects.
+
+choice SAEMS_BH1750_I2C_ADDRESS
+    prompt "BH1750 I2C address"
+    default SAEMS_BH1750_ADDRESS_LOW
+
+config SAEMS_BH1750_ADDRESS_LOW
+    bool "0x23 (ADDR low or floating)"
+
+config SAEMS_BH1750_ADDRESS_HIGH
+    bool "0x5C (ADDR high)"
+
+endchoice
+
+config SAEMS_RELAY_ACTIVE_LOW
+    bool "Relay inputs are active-low"
+    default y
+    help
+        Most two-channel SRD-05VDC-SL-C relay modules energize a channel
+        when IN is low. Disable this option only if the actual relay board
+        is confirmed to use active-high inputs.
+
+config SAEMS_RELAY_MAX_ON_SECONDS
+    int "Maximum pump ON duration in seconds"
+    range 1 86400
+    default 60
+    help
+        Safety limit for remote pump commands. The firmware turns channel 1
+        off automatically after this duration.
+
+config SAEMS_SOIL_SENSOR_ENABLED
+    bool "Enable LM393 soil moisture sensor"
+    default n
+    help
+        Enable only after attaching the probe. Percentage output also needs
+        measured endpoints and soil_calibrated=true in the device config.
+
+config SAEMS_SOIL_RAW_READOUT_ENABLED
+    bool "Read LM393 raw ADC for calibration even when soil is disabled in NVS"
+    default n
+    help
+        Use only with the probe attached and VCC=3.3V. Reads AO/DO without
+        inventing a moisture percentage. Useful when an older NVS config
+        still has soil_enabled=false. Keep disabled with an open ADC input.
+
+config SAEMS_SOIL_DRY_RAW
+    int "LM393 dry ADC value"
+    range 0 4095
+    default 3000
+    depends on SAEMS_SOIL_SENSOR_ENABLED
+
+config SAEMS_SOIL_WET_RAW
+    int "LM393 wet ADC value"
+    range 0 4095
+    default 1200
+    depends on SAEMS_SOIL_SENSOR_ENABLED
+
+endmenu

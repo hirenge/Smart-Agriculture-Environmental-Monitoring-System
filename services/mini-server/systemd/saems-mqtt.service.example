@@ -1,0 +1,17 @@
+[Unit]
+Description=SAEMS private MQTT broker
+After=network.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+ExecStart=/usr/sbin/mosquitto -c /home/admin/saems-mini-server/config/mqtt.conf
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/admin/saems-mini-server/data
+
+[Install]
+WantedBy=multi-user.target

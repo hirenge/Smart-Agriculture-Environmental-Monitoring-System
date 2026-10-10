@@ -1,0 +1,9 @@
+# Device account: publish only its telemetry and optionally receive commands.
+user saems_esp32
+topic write saems/farm-01/telemetry
+topic read saems/farm-01/commands
+
+# Server account: ingest and monitor telemetry from all farm devices.
+user saems_server
+topic read saems/+/telemetry
+topic write saems/+/commands

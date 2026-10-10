@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "device_id": "farm-01",
+  "boot_id": "a14fc921",
+  "seq": 1000042,
+  "timestamp": "2026-10-02T08:00:00Z",
+  "data_mode": "real",
+  "sensor_health": "degraded",
+  "temperature_c": 28.1,
+  "humidity_pct": 71.3,
+  "soil_moisture_pct": null,
+  "light_lux": 536.0,
+  "battery_pct": null,
+  "pump_state": "off"
+}

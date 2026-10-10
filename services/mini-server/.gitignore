@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+*.sqlite
+*.sqlite3
+data/*
+!data/.gitkeep
+device-access.json
+config/mqtt-passwd
+config/mqtt-acl
+config/mqtt.conf
+.legacy.env
